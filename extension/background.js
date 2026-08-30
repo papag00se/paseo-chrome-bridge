@@ -45,10 +45,41 @@ chrome.debugger.onDetach.addListener((source) => {
   if (source.tabId != null) attached.delete(source.tabId);
 });
 
+// Detach from every tab shortly after the last command, so Chrome's
+// "started debugging this browser" banner does not linger while idle.
+let detachTimer = null;
+function cancelIdleDetach() {
+  if (detachTimer) {
+    clearTimeout(detachTimer);
+    detachTimer = null;
+  }
+}
+function scheduleIdleDetach() {
+  cancelIdleDetach();
+  detachTimer = setTimeout(detachAll, 2000);
+}
+async function detachAll() {
+  for (const id of [...attached]) {
+    await new Promise((r) =>
+      chrome.debugger.detach({ tabId: id }, () => {
+        void chrome.runtime.lastError;
+        r();
+      }),
+    );
+    attached.delete(id);
+  }
+}
+
+// Pick the active tab of a real browser window, skipping app/PWA windows
+// (e.g. Discord installed as a Chrome web app).
 async function activeTabId() {
-  const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!tabs.length) throw new Error("no_active_tab");
-  return tabs[0].id;
+  const wins = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
+  if (!wins.length) throw new Error("no_normal_window");
+  const win = wins.find((w) => w.focused) || wins.sort((a, b) => (b.id || 0) - (a.id || 0))[0];
+  const tabs = win.tabs || [];
+  const tab = tabs.find((t) => t.active) || tabs[0];
+  if (!tab) throw new Error("no_active_tab");
+  return tab.id;
 }
 
 async function evaluate(tabId, expression) {
@@ -234,11 +265,14 @@ function connect() {
       return;
     }
     if (typeof msg.id === "number") {
+      cancelIdleDetach();
       try {
         const result = await dispatch(msg.cmd, msg.params);
         socket.send(JSON.stringify({ id: msg.id, ok: true, result }));
       } catch (err) {
         socket.send(JSON.stringify({ id: msg.id, ok: false, error: String(err && err.message ? err.message : err) }));
+      } finally {
+        scheduleIdleDetach();
       }
     }
   };
