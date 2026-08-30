@@ -3,7 +3,7 @@
   "name": "Chrome Bridge (Paseo)",
   "version": "0.1.0",
   "description": "Lets your Paseo agent drive THIS browser (your real, logged-in Chrome) via a localhost bridge.",
-  "permissions": ["debugger", "tabs", "alarms", "scripting"],
+  "permissions": ["debugger", "tabs", "tabGroups", "alarms", "scripting"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js",

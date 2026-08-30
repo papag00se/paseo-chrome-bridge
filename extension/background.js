@@ -70,16 +70,37 @@ async function detachAll() {
   }
 }
 
-// Pick the active tab of a real browser window, skipping app/PWA windows
-// (e.g. Discord installed as a Chrome web app).
-async function activeTabId() {
-  const wins = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
-  if (!wins.length) throw new Error("no_normal_window");
-  const win = wins.find((w) => w.focused) || wins.sort((a, b) => (b.id || 0) - (a.id || 0))[0];
-  const tabs = win.tabs || [];
-  const tab = tabs.find((t) => t.active) || tabs[0];
-  if (!tab) throw new Error("no_active_tab");
-  return tab.id;
+// A dedicated "Paseo" tab the agent drives, so it never hijacks the tab you are
+// looking at (and never touches app/PWA windows like Discord). Created on demand,
+// in the background, and grouped for visibility — like the Claude/Codex extensions.
+let AGENT_TAB = null;
+chrome.tabs.onRemoved.addListener((id) => {
+  if (id === AGENT_TAB) AGENT_TAB = null;
+});
+async function ensureAgentTab(focus = false) {
+  if (AGENT_TAB != null) {
+    try {
+      await chrome.tabs.get(AGENT_TAB);
+    } catch {
+      AGENT_TAB = null;
+    }
+  }
+  if (AGENT_TAB == null) {
+    const tab = await chrome.tabs.create({ url: "about:blank", active: false });
+    AGENT_TAB = tab.id;
+    try {
+      const groupId = await chrome.tabs.group({ tabIds: AGENT_TAB });
+      await chrome.tabGroups.update(groupId, { title: "Paseo", color: "blue" });
+    } catch {}
+  }
+  if (focus) {
+    try {
+      const t = await chrome.tabs.get(AGENT_TAB);
+      await chrome.tabs.update(AGENT_TAB, { active: true });
+      if (t.windowId != null) await chrome.windows.update(t.windowId, { focused: true });
+    } catch {}
+  }
+  return AGENT_TAB;
 }
 
 async function evaluate(tabId, expression) {
@@ -97,7 +118,7 @@ const jitter = (min, max) => Math.floor(min + Math.random() * Math.max(0, max - 
 
 // ---------- command implementations ----------
 async function cmdNavigate(p) {
-  const tabId = await activeTabId();
+  const tabId = await ensureAgentTab(!!p.focus);
   await attach(tabId);
   await cdp(tabId, "Page.enable");
   await cdp(tabId, "Page.navigate", { url: p.url });
@@ -113,7 +134,7 @@ async function cmdNavigate(p) {
 }
 
 async function cmdWaitText(p) {
-  const tabId = await activeTabId();
+  const tabId = await ensureAgentTab();
   await attach(tabId);
   const text = p.text || "";
   const deadline = Date.now() + (p.timeoutMs || 8000);
@@ -131,7 +152,7 @@ async function cmdWaitText(p) {
 }
 
 async function cmdType(p) {
-  const tabId = await activeTabId();
+  const tabId = await ensureAgentTab();
   await attach(tabId);
   const sel = p.selector;
   // focus (and optionally select existing content to overwrite)
@@ -160,7 +181,7 @@ const KEYMAP = {
 };
 
 async function cmdKey(p) {
-  const tabId = await activeTabId();
+  const tabId = await ensureAgentTab();
   await attach(tabId);
   const k = KEYMAP[p.key];
   if (!k) throw new Error("unsupported_key");
@@ -172,7 +193,7 @@ async function cmdKey(p) {
 }
 
 async function cmdClick(p) {
-  const tabId = await activeTabId();
+  const tabId = await ensureAgentTab();
   await attach(tabId);
   const rect = await evaluate(
     tabId,
@@ -189,7 +210,7 @@ async function cmdClick(p) {
 }
 
 async function cmdSnapshot(p) {
-  const tabId = await activeTabId();
+  const tabId = await ensureAgentTab();
   await attach(tabId);
   const max = p.maxChars || 4000;
   return evaluate(
@@ -204,14 +225,14 @@ async function cmdSnapshot(p) {
 }
 
 async function cmdScreenshot() {
-  const tabId = await activeTabId();
+  const tabId = await ensureAgentTab();
   await attach(tabId);
   const r = await cdp(tabId, "Page.captureScreenshot", { format: "png" });
   return { dataUrl: "data:image/png;base64," + r.data };
 }
 
 async function cmdEval(p) {
-  const tabId = await activeTabId();
+  const tabId = await ensureAgentTab();
   await attach(tabId);
   return { value: await evaluate(tabId, `(${p.expression})`) };
 }
@@ -234,26 +255,39 @@ async function dispatch(cmd, params) {
 }
 
 // ---------- bridge connection ----------
+// Race-safe: every handler is bound to its own socket instance (`ws`) and only
+// sends when that socket is OPEN and still current, so overlapping reconnects
+// can never send on a socket that is still CONNECTING.
+let reconnectTimer = null;
+
 function connect() {
+  if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) return;
+  let ws;
   try {
-    socket = new WebSocket(BRIDGE_URL);
-  } catch (e) {
+    ws = new WebSocket(BRIDGE_URL);
+  } catch {
     scheduleReconnect();
     return;
   }
+  socket = ws;
 
-  socket.onopen = async () => {
-    backoff = 1000;
-    let ua = "";
-    try {
-      const tabId = await activeTabId();
-      await attach(tabId);
-      ua = await evaluate(tabId, "navigator.userAgent");
-    } catch {}
-    socket.send(JSON.stringify({ type: "hello", info: { userAgent: ua, ext: "chrome-bridge 0.1.0" } }));
+  const send = (obj) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify(obj));
+      } catch {}
+    }
   };
 
-  socket.onmessage = async (event) => {
+  ws.onopen = () => {
+    if (socket !== ws) return;
+    backoff = 1000;
+    const ua = (self.navigator && self.navigator.userAgent) || "";
+    send({ type: "hello", info: { userAgent: ua, ext: "chrome-bridge 0.1.0" } });
+  };
+
+  ws.onmessage = async (event) => {
+    if (socket !== ws) return;
     let msg;
     try {
       msg = JSON.parse(event.data);
@@ -261,33 +295,40 @@ function connect() {
       return;
     }
     if (msg.type === "ping") {
-      socket.send(JSON.stringify({ type: "pong" }));
+      send({ type: "pong" });
       return;
     }
     if (typeof msg.id === "number") {
       cancelIdleDetach();
       try {
         const result = await dispatch(msg.cmd, msg.params);
-        socket.send(JSON.stringify({ id: msg.id, ok: true, result }));
+        send({ id: msg.id, ok: true, result });
       } catch (err) {
-        socket.send(JSON.stringify({ id: msg.id, ok: false, error: String(err && err.message ? err.message : err) }));
+        send({ id: msg.id, ok: false, error: String(err && err.message ? err.message : err) });
       } finally {
         scheduleIdleDetach();
       }
     }
   };
 
-  socket.onclose = () => scheduleReconnect();
-  socket.onerror = () => {
+  ws.onclose = () => {
+    if (socket === ws) socket = null;
+    scheduleReconnect();
+  };
+  ws.onerror = () => {
     try {
-      socket.close();
+      ws.close();
     } catch {}
   };
 }
 
 function scheduleReconnect() {
+  if (reconnectTimer) return;
   backoff = Math.min(backoff * 2, 15000);
-  setTimeout(connect, backoff);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect();
+  }, backoff);
 }
 
 // keep the SW alive / ensure a live socket

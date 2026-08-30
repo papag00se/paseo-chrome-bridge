@@ -113,7 +113,13 @@ send `Authorization: Bearer <token>` on `/rpc` calls.
 
 ## Notes & limits
 
-- The extension acts on the **active tab of the last-focused normal window**.
+- **Chrome must be running.** The extension lives inside Chrome, so nothing can
+  drive (or launch) the browser while it is closed — same as the Claude/Codex
+  extensions.
+- The extension drives a **dedicated background tab** in a "Paseo" tab group,
+  created on demand. It never hijacks the tab you are viewing, and never touches
+  app/PWA windows (e.g. Discord installed as a Chrome web app). Pass
+  `"focus": true` to `navigate` to bring that tab to the front.
 - `chrome.debugger` shows a persistent info bar while attached. Harmless.
 - MV3 service workers sleep when idle; the extension reconnects automatically
   and a `chrome.alarms` keep-alive plus bridge pings keep the socket live.
