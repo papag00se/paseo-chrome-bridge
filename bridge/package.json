@@ -1,0 +1,14 @@
+{
+  "name": "chrome-bridge-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Localhost bridge between the Paseo agent and a companion Chrome extension.",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
