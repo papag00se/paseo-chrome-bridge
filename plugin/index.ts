@@ -16,8 +16,15 @@ function isRunning(): boolean {
   return !!child && child.exitCode === null && !child.killed;
 }
 
-function start(): { ok: boolean; detail: string } {
+async function start(): Promise<{ ok: boolean; detail: string }> {
   if (isRunning()) return { ok: true, detail: "already running" };
+  // If a bridge (e.g. a systemd user service) is already serving this port,
+  // don't spawn a competing one. health() only reaches these details when the
+  // HTTP probe succeeds, i.e. a bridge is already listening.
+  const existing = await health();
+  if (existing.detail === "extension connected" || existing.detail === "waiting for extension") {
+    return { ok: true, detail: "external bridge already running" };
+  }
   try {
     child = spawn(process.execPath, [serverPath], {
       cwd: bridgeDir,
@@ -66,11 +73,9 @@ async function health(): Promise<{ connected: boolean; ua: string | null; detail
 export default function contribute(plugin: PluginContext) {
   // Auto-start the bridge when the plugin loads. Guarded so a failure never
   // breaks plugin initialization.
-  try {
-    start();
-  } catch (err) {
+  void start().catch((err) => {
     console.error(`[chrome-bridge] auto-start failed: ${String(err)}`);
-  }
+  });
 
   plugin.handle(bridgeStatus, async () => {
     const running = isRunning();
@@ -85,7 +90,7 @@ export default function contribute(plugin: PluginContext) {
   });
 
   plugin.handle(bridgeStart, async () => {
-    const r = start();
+    const r = await start();
     return { running: isRunning(), detail: r.detail };
   });
 

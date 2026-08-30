@@ -202,6 +202,15 @@ setInterval(() => {
   }
 }, 20000);
 
+server.on("error", (err) => {
+  if (err && err.code === "EADDRINUSE") {
+    log(`port ${PORT} already in use — another bridge is running; exiting cleanly`);
+    process.exit(0);
+  }
+  log("server error", err && err.message ? err.message : err);
+  process.exit(1);
+});
+
 server.listen(PORT, HOST, () => {
   log(`chrome-bridge v${VERSION} listening on http://${HOST}:${PORT}`);
   log(`  agent:      POST http://${HOST}:${PORT}/rpc   {method, params}`);

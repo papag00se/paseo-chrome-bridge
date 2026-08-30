@@ -48,12 +48,27 @@ node server.mjs           # or: BRIDGE_PORT=8787 node server.mjs
 3. Keep a normal tab focused. Chrome shows a *"…is debugging this browser"*
    banner while a command runs — that is expected (`chrome.debugger`).
 
-### 3. Paseo plugin (optional but nice)
+### 3. Keep the bridge running (pick one)
+
+**A. systemd user service (recommended — zero babysitting).** Auto-starts on
+login, auto-restarts on crash, survives Paseo restarts. Edit the node path in
+`chrome-bridge.service` if yours differs (`readlink -f "$(command -v node)"`),
+then:
 ```bash
-paseo plugin install /absolute/path/to/chrome-bridge/plugin
-paseo plugin ls
+cp chrome-bridge.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now chrome-bridge.service
+systemctl --user status chrome-bridge.service
+# optional: run even before you log in
+# loginctl enable-linger "$USER"
 ```
-Open the **Chrome Bridge** sidebar item to see live status and Start/Stop.
+
+**B. Paseo plugin (nice UI status panel).** Note: the `paseo` command here is the
+desktop **app**, not a headless CLI — `paseo plugin install <path>` just opens the
+folder as a project. Install from the app instead: **Settings → Plugins → Install**
+→ select this repo's `plugin/` folder. The plugin auto-starts the bridge and shows
+live status; it probes the port first, so it won't conflict with the systemd
+service if you run both.
 
 ## Driving it from the agent
 
