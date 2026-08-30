@@ -52,7 +52,8 @@ async function doSearch(params) {
     perCharMaxMs = 180,
     thinkMinMs = 500,
     thinkMaxMs = 1500,
-    maxChars = 4000,
+    limit = 10,
+    focus = false,
   } = params || {};
   if (!query || typeof query !== "string") throw new Error("query_required");
 
@@ -63,7 +64,7 @@ async function doSearch(params) {
   };
   const e = engines[engine] || engines.google;
 
-  await sendToExtension("navigate", { url: e.url, waitMs: 15000 });
+  await sendToExtension("navigate", { url: e.url, waitMs: 15000, focus });
   await sleep(jitter(thinkMinMs, thinkMaxMs));
   await sendToExtension("type", {
     selector: e.box,
@@ -77,8 +78,8 @@ async function doSearch(params) {
   // give results a moment to render
   await sendToExtension("waitText", { text: "", timeoutMs: 8000 }).catch(() => {});
   await sleep(jitter(thinkMinMs, thinkMaxMs));
-  const snap = await sendToExtension("snapshot", { maxChars });
-  return { engine, query, page: snap };
+  const parsed = await sendToExtension("results", { limit });
+  return { engine, query, ...parsed };
 }
 
 // ---- HTTP control server (agent-facing) -----------------------------------

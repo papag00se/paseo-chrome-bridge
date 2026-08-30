@@ -88,13 +88,15 @@ curl -s -X POST http://127.0.0.1:8787/rpc \
 
 | method       | params                                                                 | does |
 |--------------|------------------------------------------------------------------------|------|
-| `search`     | `query`, `engine` (`google`\|`bing`\|`duckduckgo`), pacing overrides    | navigate → human-type → Enter → snapshot |
+| `search`     | `query`, `engine` (`google`\|`bing`\|`duckduckgo`), `limit?`, `focus?`, pacing | navigate → human-type → Enter → parsed `results` |
 | `navigate`   | `url`, `waitMs?`                                                        | go to URL in the active tab |
 | `type`       | `selector`, `text`, `clearFirst?`, `perCharMinMs?`, `perCharMaxMs?`     | focus + trusted per-char typing |
 | `key`        | `key` (`Enter`\|`Tab`\|`Escape`\|`Backspace`)                           | trusted key event |
 | `click`      | `selector`                                                             | trusted mouse click at element center |
 | `waitText`   | `text`, `timeoutMs?`                                                    | wait until page contains text |
 | `snapshot`   | `maxChars?`                                                            | `{title, url, text, links[]}` |
+| `results`    | `limit?`                                                              | Google-aware `{query, count, results:[{rank,title,url,snippet}]}` |
+| `openResult` | `n` (1-based), `focus?`, `maxChars?`                                   | human-paced trusted click into the Nth result → `{opened, target, page}` |
 | `screenshot` | —                                                                      | `{dataUrl}` PNG |
 | `eval`       | `expression`                                                          | evaluate JS, return value |
 

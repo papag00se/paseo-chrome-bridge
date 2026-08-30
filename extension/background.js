@@ -237,6 +237,101 @@ async function cmdEval(p) {
   return { value: await evaluate(tabId, `(${p.expression})`) };
 }
 
+// Google-aware organic result extraction: clean {rank, title, url, snippet}.
+function resultsExpr(limit) {
+  return `(() => {
+    const out = [];
+    const seen = new Set();
+    const anchors = Array.from(document.querySelectorAll('a')).filter((a) => a.querySelector('h3') && /^https?:/.test(a.href));
+    for (const a of anchors) {
+      if (seen.has(a.href)) continue;
+      seen.add(a.href);
+      const h3 = a.querySelector('h3');
+      let snippet = '';
+      let el = a;
+      for (let i = 0; i < 6 && el; i++) {
+        el = el.parentElement;
+        if (!el) break;
+        const s = el.querySelector('.VwiC3b, div[data-sncf], .yXK7lf, .lyLwlc');
+        if (s && s.innerText) { snippet = s.innerText.trim(); break; }
+      }
+      out.push({ rank: out.length + 1, title: (h3.innerText || '').trim(), url: a.href, snippet: snippet.slice(0, 300) });
+      if (out.length >= ${limit}) break;
+    }
+    const box = document.querySelector('textarea[name=q], input[name=q]');
+    return { query: box ? box.value : '', count: out.length, results: out };
+  })()`;
+}
+
+async function cmdResults(p) {
+  const tabId = await ensureAgentTab();
+  await attach(tabId);
+  return evaluate(tabId, resultsExpr(p.limit || 10));
+}
+
+// Click into the Nth organic result at a human pace (trusted click, with a
+// navigate fallback if the click is intercepted).
+async function cmdOpenResult(p) {
+  const tabId = await ensureAgentTab(!!p.focus);
+  await attach(tabId);
+  const idx = Math.max(1, p.n || 1) - 1;
+  const info = await evaluate(
+    tabId,
+    `(() => {
+      const seen = new Set();
+      const uniq = [];
+      for (const a of Array.from(document.querySelectorAll('a'))) {
+        if (!a.querySelector('h3') || !/^https?:/.test(a.href) || seen.has(a.href)) continue;
+        seen.add(a.href); uniq.push(a);
+      }
+      const a = uniq[${idx}];
+      if (!a) return null;
+      a.scrollIntoView({ block: 'center' });
+      const r = a.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + Math.min(r.height / 2, 12), href: a.href, title: (a.querySelector('h3') || {}).innerText || '' };
+    })()`,
+  );
+  if (!info) throw new Error('result_not_found');
+
+  await sleep(jitter(300, 900));
+  const opts = { x: info.x, y: info.y, button: 'left', clickCount: 1 };
+  await cdp(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: info.x, y: info.y });
+  await cdp(tabId, 'Input.dispatchMouseEvent', { type: 'mousePressed', ...opts });
+  await cdp(tabId, 'Input.dispatchMouseEvent', { type: 'mouseReleased', ...opts });
+
+  const deadline = Date.now() + (p.waitMs || 15000);
+  let navigated = false;
+  while (Date.now() < deadline) {
+    try {
+      const st = await evaluate(tabId, 'document.readyState');
+      const url = await evaluate(tabId, 'location.href');
+      if ((st === 'complete' || st === 'interactive') && url && !/[.\/]google\.[^/]+\/search/.test(url)) {
+        navigated = true;
+        break;
+      }
+    } catch {}
+    await sleep(200);
+  }
+  if (!navigated) {
+    // fallback: the click was intercepted; go straight to the href
+    await cdp(tabId, 'Page.enable');
+    await cdp(tabId, 'Page.navigate', { url: info.href });
+    const d2 = Date.now() + (p.waitMs || 15000);
+    while (Date.now() < d2) {
+      try {
+        const st = await evaluate(tabId, 'document.readyState');
+        if (st === 'complete' || st === 'interactive') break;
+      } catch {}
+      await sleep(150);
+    }
+  }
+  const snap = await evaluate(
+    tabId,
+    `(() => ({ title: document.title, url: location.href, text: (document.body ? document.body.innerText : '').slice(0, ${p.maxChars || 4000}) }))()`,
+  );
+  return { opened: info.title, target: info.href, viaFallback: !navigated, page: snap };
+}
+
 const HANDLERS = {
   navigate: cmdNavigate,
   waitText: cmdWaitText,
@@ -244,6 +339,8 @@ const HANDLERS = {
   key: cmdKey,
   click: cmdClick,
   snapshot: cmdSnapshot,
+  results: cmdResults,
+  openResult: cmdOpenResult,
   screenshot: cmdScreenshot,
   eval: cmdEval,
 };
