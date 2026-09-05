@@ -1,0 +1,17 @@
+# Example only. Run ./install-local.sh to generate the active unit with the
+# correct absolute paths for this machine.
+[Unit]
+Description=Chrome Bridge (agent -> real Chrome)
+Documentation=https://github.com/papag00se/chrome-bridge
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=/absolute/path/to/chrome-bridge/bridge
+Environment=BRIDGE_PORT=8787
+ExecStart=/absolute/path/to/node /absolute/path/to/chrome-bridge/bridge/server.mjs
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

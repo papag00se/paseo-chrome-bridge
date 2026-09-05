@@ -39,6 +39,35 @@ function sendToExtension(cmd, params = {}, timeoutMs = 30000) {
   });
 }
 
+// ---- global serialization ---------------------------------------------------
+// The extension drives ONE dedicated tab. Concurrent commands would interleave
+// keystrokes and garble queries, so all /rpc work executes strictly one at a
+// time. A short FIFO queue absorbs bursts (e.g. an agent batching two
+// searches); when it is full, callers get a QUEUE_FULL error immediately.
+// Tasks whose caller disconnected while waiting are skipped, never executed —
+// an abandoned search must not type into the tab a minute later.
+const MAX_QUEUED = 2;
+let queueDepth = 0; // running + waiting
+let chain = Promise.resolve();
+
+function serialize(task, isAbandoned = () => false) {
+  if (queueDepth > MAX_QUEUED) {
+    return Promise.reject(new Error("QUEUE_FULL"));
+  }
+  queueDepth++;
+  const result = chain.then(() => {
+    if (isAbandoned()) {
+      log("skipping queued command: caller disconnected");
+      throw new Error("CALLER_GONE");
+    }
+    return task();
+  }).finally(() => {
+    queueDepth--;
+  });
+  chain = result.catch(() => {}); // keep the chain alive after failures
+  return result;
+}
+
 // ---- human-like pacing helpers --------------------------------------------
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const jitter = (min, max) => Math.floor(min + Math.random() * Math.max(0, max - min));
@@ -80,6 +109,14 @@ async function doSearch(params) {
   await sleep(jitter(thinkMinMs, thinkMaxMs));
   const parsed = await sendToExtension("results", { limit });
   return { engine, query, ...parsed };
+}
+
+// High-level "fetch": navigate and snapshot as one atomic unit of work.
+async function doFetch(params) {
+  const { url, waitMs = 1500, maxChars = 20000 } = params || {};
+  if (!url || typeof url !== "string") throw new Error("url_required");
+  await sendToExtension("navigate", { url, waitMs });
+  return sendToExtension("snapshot", { maxChars });
 }
 
 // ---- HTTP control server (agent-facing) -----------------------------------
@@ -127,10 +164,20 @@ const server = http.createServer(async (req, res) => {
       }
       const { method, params } = msg || {};
       if (!method) return json(res, 400, { ok: false, error: "method_required" });
+      let callerGone = false;
+      res.on("close", () => {
+        if (!res.writableEnded) callerGone = true;
+      });
       try {
-        const result = method === "search" ? await doSearch(params) : await sendToExtension(method, params || {});
+        const result = await serialize(() => {
+          if (method === "search") return doSearch(params);
+          if (method === "fetch") return doFetch(params);
+          return sendToExtension(method, params || {});
+        }, () => callerGone);
+        if (callerGone) return;
         return json(res, 200, { ok: true, result });
       } catch (err) {
+        if (callerGone) return;
         return json(res, 200, { ok: false, error: String(err && err.message ? err.message : err) });
       }
     }
