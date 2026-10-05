@@ -35,7 +35,7 @@ NODE_ESCAPED=$(systemd_quote "$NODE")
 cat >"$SERVICE_FILE" <<EOF
 [Unit]
 Description=Chrome Bridge (agent -> real Chrome)
-Documentation=https://github.com/papag00se/chrome-bridge
+Documentation=https://github.com/papag00se/paseo-chrome-bridge
 After=default.target
 
 [Service]

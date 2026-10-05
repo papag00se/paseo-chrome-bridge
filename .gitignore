@@ -2,3 +2,5 @@ node_modules/
 *.log
 .DS_Store
 _mockext.mjs
+__pycache__/
+*.py[cod]

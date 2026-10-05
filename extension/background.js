@@ -186,8 +186,13 @@ async function cmdKey(p) {
   const k = KEYMAP[p.key];
   if (!k) throw new Error("unsupported_key");
   const base = { windowsVirtualKeyCode: k.keyCode, key: k.key, code: k.code };
-  await cdp(tabId, "Input.dispatchKeyEvent", { type: "rawKeyDown", ...base, ...(k.text ? { text: k.text } : {}) });
-  if (k.text) await cdp(tabId, "Input.dispatchKeyEvent", { type: "char", ...base, text: k.text });
+  // Google and other JS-heavy forms may ignore rawKeyDown for Enter. A normal
+  // keyDown is the browser event path that triggers the focused form's submit.
+  await cdp(tabId, "Input.dispatchKeyEvent", {
+    type: "keyDown",
+    ...base,
+    ...(k.text ? { text: k.text, unmodifiedText: k.text } : {}),
+  });
   await cdp(tabId, "Input.dispatchKeyEvent", { type: "keyUp", ...base });
   return { key: p.key };
 }

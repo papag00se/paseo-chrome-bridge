@@ -9,6 +9,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { registerBrowserTools } from "./browser-tools.mjs";
 
 const PORT = Number(process.env.BRIDGE_PORT || 8787);
 const TOKEN = process.env.BRIDGE_TOKEN || "";
@@ -85,7 +86,7 @@ server.registerTool(
       "Search the web using the user's real, logged-in Chrome browser (real cookies, IP, and " +
       "fingerprint, human-paced typing). Returns ranked results with titles, URLs, and snippets. " +
       "Use this whenever you need current information from the web. The browser handles exactly " +
-      "one operation at a time: never call web_search/web_fetch in parallel; make calls " +
+      "one operation at a time: never call web tools in parallel; make calls " +
       "sequentially and wait for each result.",
     inputSchema: {
       query: z.string().describe("The search query"),
@@ -120,8 +121,9 @@ server.registerTool(
     description:
       "Fetch a URL using the user's real, logged-in Chrome browser and return the rendered page " +
       "text and links. Works on pages that need JavaScript or the user's login session. Use this " +
-      "to read a specific web page. The browser handles exactly one operation at a time: never " +
-      "call web_search/web_fetch in parallel; make calls sequentially and wait for each result.",
+      "to read a specific web page. For logged-in apps use web_snapshot to inspect the existing " +
+      "page without reloading, web_screenshot to see it, and web_click to navigate controls. " +
+      "The browser handles one operation at a time: never call web tools in parallel.",
     inputSchema: {
       url: z.string().url().describe("The URL to fetch"),
       maxChars: z
@@ -160,6 +162,8 @@ server.registerTool(
     }
   },
 );
+
+registerBrowserTools(server, { rpc, serialize, errorResult });
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

@@ -1,0 +1,21 @@
+{
+  "name": "chrome-bridge-recovered",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "22.20.1",
+    "@types/react": "19.2.18",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "zod": "4.5.4",
+    "@tanstack/react-query": "5.102.8",
+    "@getpaseo/plugin": "0.9.1",
+    "@getpaseo/client": "0.9.1",
+    "@getpaseo/protocol": "0.9.1"
+  }
+}
