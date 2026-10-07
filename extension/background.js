@@ -1,7 +1,7 @@
 // Chrome Bridge — MV3 background service worker.
 //
 // Connects out to the localhost bridge (ws://127.0.0.1:8787/ext) and executes
-// commands inside your ACTIVE tab using the Chrome DevTools Protocol via
+// commands inside the dedicated Paseo tab using the Chrome DevTools Protocol via
 // chrome.debugger, so input events are trusted and behave like real typing.
 //
 // Nothing secret lives here. Change BRIDGE_URL/token below if you customize the
@@ -29,16 +29,22 @@ function cdp(tabId, method, params = {}) {
   });
 }
 
-function attach(tabId) {
-  return new Promise((resolve, reject) => {
-    if (attached.has(tabId)) return resolve();
-    chrome.debugger.attach({ tabId }, "1.3", () => {
-      const err = chrome.runtime.lastError;
-      if (err && !/already attached/i.test(err.message)) return reject(new Error(err.message));
-      attached.add(tabId);
-      resolve();
+async function attach(tabId) {
+  if (!attached.has(tabId)) {
+    await new Promise((resolve, reject) => {
+      chrome.debugger.attach({ tabId }, "1.3", () => {
+        const err = chrome.runtime.lastError;
+        if (err && !/already attached/i.test(err.message)) return reject(new Error(err.message));
+        attached.add(tabId);
+        resolve();
+      });
     });
-  });
+  }
+  // Background tabs can acknowledge Input events without delivering them.
+  // Emulate page focus on this CDP target, not by activating the user's window.
+  // Reapply even on cached attachments; propagate errors rather than reporting
+  // successful input when Chrome cannot prepare the target.
+  await cdp(tabId, "Emulation.setFocusEmulationEnabled", { enabled: true });
 }
 
 chrome.debugger.onDetach.addListener((source) => {

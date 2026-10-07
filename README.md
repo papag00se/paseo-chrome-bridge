@@ -48,7 +48,7 @@ npm ci
 node server.mjs
 ```
 
-In Chrome, open **chrome://extensions**, enable **Developer mode**, and use **Load unpacked** to select the repository's `extension/` directory. Keep a normal browser tab focused while using interactive tools.
+In Chrome, open **chrome://extensions**, enable **Developer mode**, and use **Load unpacked** to select the repository's `extension/` directory. The bridge uses a dedicated background Paseo tab. CDP focus emulation prepares that target for trusted input without activating your foreground tab. After changing extension code, reload Chrome Bridge from `chrome://extensions`.
 
 To add the Paseo 0.9.1 settings panel, in a separate terminal:
 

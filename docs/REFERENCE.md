@@ -207,8 +207,16 @@ own calls and tells agents in the tool descriptions never to call
 - `chrome.debugger` shows a persistent info bar while attached. Harmless.
 - MV3 service workers sleep when idle; the extension reconnects automatically
   and a `chrome.alarms` keep-alive plus bridge pings keep the socket live.
+- CDP `Emulation.setFocusEmulationEnabled` prepares the dedicated target before
+  commands, including cached debugger attachments. This does not activate a tab
+  or focus a desktop window. Failure is returned before input is dispatched;
+  there is no synthetic DOM-click fallback. Reload the unpacked extension after
+  changing its source (`chrome://extensions` → Chrome Bridge → Reload).
 - Typing uses CDP `Input.insertText` per character (trusted input events);
   Enter/keys use `Input.dispatchKeyEvent`.
+- Regression tests execute the actual extension handlers against isolated
+  Chromium CDP targets, checking trusted clicks, typing, keys, target isolation,
+  and failure before input when focus preparation is unavailable.
 - Be a good citizen: this is for automating *your own* activity at a human pace,
   not for scraping or evading rate limits.
 
