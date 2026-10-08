@@ -61,6 +61,8 @@ paseo plugin install "$PWD"
 
 Open **Settings → Plugins → Chrome Bridge → Settings**. Start/Stop controls affect the bridge; simply opening settings reads its status. MCP registration is a separate step described in the [setup reference](docs/REFERENCE.md).
 
+![Chrome Bridge settings in Paseo: bridge and extension status, Start/Stop controls and one-time extension setup](docs/media/settings.png)
+
 ## Compatibility
 
 The repository includes the original plugin in `plugin/` and the split-entry Paseo 0.9.1–0.9.x variant in `plugin-recovered-v091/`. The compatibility launcher currently expects `~/Work/chrome-bridge/bridge`; use that checkout location.
