@@ -54,18 +54,25 @@ test("browser snapshot selectors address real controls and omit hidden controls 
   }
 });
 
-test("MCP stdio end-to-end: discovery, typed commands, image output, errors and serialization", async () => {
+test("MCP stdio end-to-end: discovery, typed commands, image output, errors, session and rate limits", async () => {
   const calls = [];
-  let active = 0;
-  let maximum = 0;
+  const sessionLinks = [];
+  let rateLimited = false;
   const bridge = http.createServer(async (req, res) => {
+    if (req.url.startsWith("/session")) {
+      sessionLinks.push(new URL(req.url, "http://x").searchParams.get("id"));
+      res.writeHead(200);
+      res.write("open\n");
+      return; // held open, like the real bridge
+    }
     let raw = "";
     for await (const chunk of req) raw += chunk;
     const request = JSON.parse(raw);
     calls.push(request);
-    maximum = Math.max(maximum, ++active);
-    await new Promise(resolve => setTimeout(resolve, 15));
-    active--;
+    if (rateLimited) {
+      res.writeHead(429, { "content-type": "application/json", "retry-after": "23" });
+      return res.end(JSON.stringify({ ok: false, error: "RATE_LIMITED", retryAfterMs: 22_400 }));
+    }
     let result = { received: request.method };
     if (request.method === "eval") result = { value: { title: "Authenticated editor", elements: [] } };
     if (request.method === "screenshot") result = { dataUrl: `data:image/png;base64,${png}` };
@@ -90,8 +97,11 @@ test("MCP stdio end-to-end: discovery, typed commands, image output, errors and 
     assert.equal(JSON.parse(snapshot.content[0].text).title, "Authenticated editor");
     assert.equal(calls.at(-1).method, "eval");
     assert.match(calls.at(-1).params.expression, /20000,150/);
+    const session = calls.at(-1).session;
+    assert.match(session, /^[0-9a-f-]{36}$/);
+    assert.deepEqual(sessionLinks, [session]);
     await client.callTool({ name: "web_click", arguments: { selector: "#edit" } });
-    assert.deepEqual(calls.at(-1), { method: "click", params: { selector: "#edit" } });
+    assert.deepEqual(calls.at(-1), { method: "click", params: { selector: "#edit" }, session });
     await client.callTool({ name: "web_type", arguments: { selector: "#url", text: "hello", clearFirst: true } });
     assert.deepEqual(calls.at(-1).params, { selector: "#url", text: "hello", clearFirst: true, perCharMinMs: 10, perCharMaxMs: 25 });
     const image = await client.callTool({ name: "web_screenshot", arguments: {} });
@@ -101,8 +111,14 @@ test("MCP stdio end-to-end: discovery, typed commands, image output, errors and 
     const missing = await client.callTool({ name: "web_click", arguments: { selector: "#missing" } });
     assert.equal(missing.isError, true);
     assert.match(missing.content[0].text, /selector_not_found/);
-    await Promise.all(["Tab", "Escape"].map(key => client.callTool({ name: "web_key", arguments: { key } })));
-    assert.equal(maximum, 1);
+    assert.ok(calls.every(call => call.session === session));
+    assert.deepEqual(sessionLinks, [session]); // one held connection for the agent's lifetime
+    rateLimited = true;
+    const limited = await client.callTool({ name: "web_search", arguments: { query: "ramen" } });
+    assert.equal(limited.isError, true);
+    assert.match(limited.content[0].text, /^RATE_LIMITED — retry in 23 seconds/);
+    assert.match(limited.content[0].text, /call this same tool again with the same arguments/);
+    rateLimited = false;
     const count = calls.length;
     const invalid = await client.callTool({ name: "web_click", arguments: { selector: "" } });
     assert.equal(invalid.isError, true);

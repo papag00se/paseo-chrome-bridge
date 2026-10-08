@@ -8,8 +8,10 @@ const source = await readFile(new URL('../../extension/background.js', import.me
 
 // Execute the actual extension handlers; only Chrome's extension transport is
 // adapted to a real, isolated Chromium CDP session. Never uses the user profile.
-function extension(session, { failFocus = false } = {}) {
+function extension(session, { failFocus = false, storage = {}, firstTab = 7 } = {}) {
   const calls = [];
+  const tabs = new Set();
+  let nextTab = firstTab;
   const chrome = {
     runtime: {},
     debugger: {
@@ -26,14 +28,19 @@ function extension(session, { failFocus = false } = {}) {
         });
       },
     },
+    storage: { session: {
+      async get(key) { return { [key]: storage[key] }; },
+      async set(values) { Object.assign(storage, structuredClone(values)); },
+    } },
     tabs: {
       onRemoved: { addListener() {} },
-      async create() { return { id: 7 }; },
-      async get(id) { assert.equal(id, 7); return { id }; },
+      async create() { const id = nextTab++; tabs.add(id); calls.push(['create', id]); return { id }; },
+      async get(id) { if (!tabs.has(id)) throw new Error('No tab'); return { id }; },
+      async remove(id) { tabs.delete(id); calls.push(['remove', id]); },
       async group() { return 1; },
       async update() { assert.fail('must not activate a tab'); },
     },
-    tabGroups: { async update() {} },
+    tabGroups: { async query() { return []; }, async update() {} },
     windows: { async update() { assert.fail('must not focus a window'); } },
     alarms: { create() {}, onAlarm: { addListener() {} } },
   };
@@ -41,7 +48,7 @@ function extension(session, { failFocus = false } = {}) {
     WebSocket: class { static CONNECTING = 0; static OPEN = 1; readyState = 0; },
   });
   vm.runInContext(source, context);
-  return { run: expression => vm.runInContext(expression, context), calls };
+  return { run: expression => vm.runInContext(expression, context), calls, tabs };
 }
 
 test('extension trusted input stays on its target without activating the foreground tab', async () => {
@@ -59,14 +66,14 @@ test('extension trusted input stays on its target without activating the foregro
     await foreground.bringToFront();
     const session = await context.newCDPSession(page);
     const ext = extension(session);
-    await ext.run('cmdClick({selector: "#go"})');
-    await ext.run('cmdType({selector: "#input", text: "hello", perCharMinMs: 0, perCharMaxMs: 0})');
-    await ext.run('cmdKey({key: "Enter"})');
+    await ext.run('dispatch("click", {selector: "#go"}, "agent-a")');
+    await ext.run('dispatch("type", {selector: "#input", text: "hello", perCharMinMs: 0, perCharMaxMs: 0}, "agent-a")');
+    await ext.run('dispatch("key", {key: "Enter"}, "agent-a")');
     assert.deepEqual(await page.evaluate(() => clicks), [true]);
     assert.equal(await page.locator('#input').inputValue(), 'hello');
     assert.deepEqual(await page.evaluate(() => keys), [['Enter', true]]);
     assert.equal(await foreground.locator('#other').inputValue(), 'untouched');
-    assert.ok(ext.calls.every(([, target]) => target.tabId === 7));
+    assert.ok(ext.calls.filter(([m]) => m !== 'create').every(([, target]) => target.tabId === 7));
     assert.equal(ext.calls.filter(([method]) => method === 'attach').length, 1);
     assert.equal(ext.calls.filter(([method]) => method === 'Emulation.setFocusEmulationEnabled').length, 3);
     await session.detach();
@@ -75,7 +82,32 @@ test('extension trusted input stays on its target without activating the foregro
 
 test('failed focus preparation rejects input, including on a cached attachment', async () => {
   const ext = extension({ send() { assert.fail('must not send input'); } }, { failFocus: true });
-  await assert.rejects(ext.run('cmdClick({selector: "#go"})'), /focus unavailable/);
-  await assert.rejects(ext.run('cmdKey({key: "Enter"})'), /focus unavailable/);
-  assert.deepEqual(ext.calls.map(([method]) => method), ['attach', 'Emulation.setFocusEmulationEnabled', 'Emulation.setFocusEmulationEnabled']);
+  await assert.rejects(ext.run('dispatch("click", {selector: "#go"}, "agent-a")'), /focus unavailable/);
+  await assert.rejects(ext.run('dispatch("key", {key: "Enter"}, "agent-a")'), /focus unavailable/);
+  assert.deepEqual(ext.calls.map(([method]) => method), ['create', 'attach', 'Emulation.setFocusEmulationEnabled', 'Emulation.setFocusEmulationEnabled']);
+});
+
+test('each agent session gets its own tab, kept across service-worker restarts and closed on release', async () => {
+  const storage = {};
+  const browser = { send: async () => ({ data: '' }) };
+  const ext = extension(browser, { storage });
+  await ext.run('dispatch("screenshot", {}, "agent-a")');
+  await ext.run('dispatch("screenshot", {}, "agent-b")');
+  await ext.run('dispatch("screenshot", {}, "agent-a")');
+  const shots = ext.calls.filter(([m]) => m === 'Page.captureScreenshot').map(([, t]) => t.tabId);
+  assert.deepEqual(shots, [7, 8, 7]);
+
+  // A restarted service worker reads the same session map and reuses the tab.
+  const restarted = extension(browser, { storage, firstTab: 9 });
+  for (const id of ext.tabs) restarted.tabs.add(id);
+  await restarted.run('dispatch("screenshot", {}, "agent-a")');
+  assert.deepEqual(restarted.calls.filter(([m]) => m === 'Page.captureScreenshot').map(([, t]) => t.tabId), [7]);
+  assert.equal(restarted.calls.some(([m]) => m === 'create'), false);
+
+  await restarted.run('dispatch("release", {}, "agent-b")');
+  assert.deepEqual(restarted.calls.filter(([m]) => m === 'remove'), [['remove', 8]]);
+  await restarted.run('dispatch("screenshot", {}, "agent-c")');
+  await restarted.run('dispatch("retain", {sessions: ["shared", "agent-a"]}, null)');
+  assert.deepEqual(restarted.calls.filter(([m]) => m === 'remove').map(([, id]) => id), [8, 9]);
+  assert.deepEqual(Object.keys(storage.sessionTabs), ['agent-a']);
 });

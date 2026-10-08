@@ -22,7 +22,8 @@ Give a Paseo agent access to your existing Chrome session through a local bridge
 | Local transport | A Node bridge on `127.0.0.1` connects agents and the MV3 extension |
 | Browser MCP tools | Search, fetch, inspect, click, type, and screenshot operations |
 | Native plugin settings | Bridge status, extension status, and Start/Stop controls |
-| Input serialization | Coordinated individual browser calls and offline error reporting |
+| One tab per agent | Each agent works in its own background tab; its calls run in order |
+| Google search pacing | Google searches from all agents are spaced out; agents get a clear "retry in N seconds" |
 | Companion utilities | Optional native desktop MCP tools and provider launch guards |
 
 ## How it fits
@@ -48,7 +49,7 @@ npm ci
 node server.mjs
 ```
 
-In Chrome, open **chrome://extensions**, enable **Developer mode**, and use **Load unpacked** to select the repository's `extension/` directory. The bridge uses a dedicated background Paseo tab. CDP focus emulation prepares that target for trusted input without activating your foreground tab. After changing extension code, reload Chrome Bridge from `chrome://extensions`.
+In Chrome, open **chrome://extensions**, enable **Developer mode**, and use **Load unpacked** to select the repository's `extension/` directory. Each agent gets its own background tab in the "Paseo" tab group, closed when the agent ends. CDP focus emulation prepares those targets for trusted input without activating your foreground tab. After changing extension code, reload Chrome Bridge from `chrome://extensions`.
 
 To add the Paseo 0.9.1 settings panel, in a separate terminal:
 

@@ -1,8 +1,8 @@
 // Chrome Bridge — MV3 background service worker.
 //
 // Connects out to the localhost bridge (ws://127.0.0.1:8787/ext) and executes
-// commands inside the dedicated Paseo tab using the Chrome DevTools Protocol via
-// chrome.debugger, so input events are trusted and behave like real typing.
+// commands in each agent's own background tab using the Chrome DevTools Protocol
+// via chrome.debugger, so input events are trusted and behave like real typing.
 //
 // Nothing secret lives here. Change BRIDGE_URL/token below if you customize the
 // bridge port. Chrome shows a "…is debugging this browser" banner while active;
@@ -52,8 +52,10 @@ chrome.debugger.onDetach.addListener((source) => {
 });
 
 // Detach from every tab shortly after the last command, so Chrome's
-// "started debugging this browser" banner does not linger while idle.
+// "started debugging this browser" banner does not linger while idle. Agents
+// run commands concurrently in their own tabs, so wait for all of them.
 let detachTimer = null;
+let inFlight = 0;
 function cancelIdleDetach() {
   if (detachTimer) {
     clearTimeout(detachTimer);
@@ -62,7 +64,7 @@ function cancelIdleDetach() {
 }
 function scheduleIdleDetach() {
   cancelIdleDetach();
-  detachTimer = setTimeout(detachAll, 2000);
+  if (inFlight === 0) detachTimer = setTimeout(detachAll, 2000);
 }
 async function detachAll() {
   for (const id of [...attached]) {
@@ -76,37 +78,79 @@ async function detachAll() {
   }
 }
 
-// A dedicated "Paseo" tab the agent drives, so it never hijacks the tab you are
-// looking at (and never touches app/PWA windows like Discord). Created on demand,
-// in the background, and grouped for visibility — like the Claude/Codex extensions.
-let AGENT_TAB = null;
-chrome.tabs.onRemoved.addListener((id) => {
-  if (id === AGENT_TAB) AGENT_TAB = null;
+// Each agent session gets its own background tab in the "Paseo" tab group, so
+// agents never type into each other's pages, and the tab you are looking at
+// (or app/PWA windows like Discord) is never touched. The session -> tab map
+// lives in chrome.storage.session so it survives service-worker restarts.
+let sessionTabs = null; // Promise<Map<session, tabId>>
+function loadSessionTabs() {
+  sessionTabs ??= chrome.storage.session
+    .get("sessionTabs")
+    .then((stored) => new Map(Object.entries(stored.sessionTabs || {})));
+  return sessionTabs;
+}
+async function saveSessionTabs(map) {
+  await chrome.storage.session.set({ sessionTabs: Object.fromEntries(map) });
+}
+
+chrome.tabs.onRemoved.addListener(async (id) => {
+  const map = await loadSessionTabs();
+  for (const [session, tabId] of map) if (tabId === id) map.delete(session);
+  await saveSessionTabs(map);
 });
-async function ensureAgentTab(focus = false) {
-  if (AGENT_TAB != null) {
+
+// Serialized so two sessions opening tabs at once share one group.
+let groupChain = Promise.resolve();
+function addToPaseoGroup(tabId) {
+  groupChain = groupChain.then(async () => {
     try {
-      await chrome.tabs.get(AGENT_TAB);
+      const [group] = await chrome.tabGroups.query({ title: "Paseo" });
+      if (group) await chrome.tabs.group({ tabIds: tabId, groupId: group.id });
+      else {
+        const groupId = await chrome.tabs.group({ tabIds: tabId });
+        await chrome.tabGroups.update(groupId, { title: "Paseo", color: "blue" });
+      }
+    } catch {}
+  });
+  return groupChain;
+}
+
+async function tabFor(session, focus = false) {
+  const map = await loadSessionTabs();
+  let tabId = map.get(session);
+  if (tabId != null) {
+    try {
+      await chrome.tabs.get(tabId);
     } catch {
-      AGENT_TAB = null;
+      tabId = null;
     }
   }
-  if (AGENT_TAB == null) {
+  if (tabId == null) {
     const tab = await chrome.tabs.create({ url: "about:blank", active: false });
-    AGENT_TAB = tab.id;
-    try {
-      const groupId = await chrome.tabs.group({ tabIds: AGENT_TAB });
-      await chrome.tabGroups.update(groupId, { title: "Paseo", color: "blue" });
-    } catch {}
+    tabId = tab.id;
+    map.set(session, tabId);
+    await saveSessionTabs(map);
+    await addToPaseoGroup(tabId);
   }
   if (focus) {
     try {
-      const t = await chrome.tabs.get(AGENT_TAB);
-      await chrome.tabs.update(AGENT_TAB, { active: true });
+      const t = await chrome.tabs.get(tabId);
+      await chrome.tabs.update(tabId, { active: true });
       if (t.windowId != null) await chrome.windows.update(t.windowId, { focused: true });
     } catch {}
   }
-  return AGENT_TAB;
+  return tabId;
+}
+
+async function closeSessions(sessions) {
+  const map = await loadSessionTabs();
+  for (const session of sessions) {
+    const tabId = map.get(session);
+    map.delete(session);
+    if (tabId != null) await chrome.tabs.remove(tabId).catch(() => {});
+  }
+  await saveSessionTabs(map);
+  return { closed: sessions.length };
 }
 
 async function evaluate(tabId, expression) {
@@ -123,9 +167,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const jitter = (min, max) => Math.floor(min + Math.random() * Math.max(0, max - min));
 
 // ---------- command implementations ----------
-async function cmdNavigate(p) {
-  const tabId = await ensureAgentTab(!!p.focus);
-  await attach(tabId);
+async function cmdNavigate(tabId, p) {
   await cdp(tabId, "Page.enable");
   await cdp(tabId, "Page.navigate", { url: p.url });
   const deadline = Date.now() + (p.waitMs || 15000);
@@ -139,9 +181,7 @@ async function cmdNavigate(p) {
   return { url: await evaluate(tabId, "location.href") };
 }
 
-async function cmdWaitText(p) {
-  const tabId = await ensureAgentTab();
-  await attach(tabId);
+async function cmdWaitText(tabId, p) {
   const text = p.text || "";
   const deadline = Date.now() + (p.timeoutMs || 8000);
   while (Date.now() < deadline) {
@@ -157,9 +197,7 @@ async function cmdWaitText(p) {
   return { found: false };
 }
 
-async function cmdType(p) {
-  const tabId = await ensureAgentTab();
-  await attach(tabId);
+async function cmdType(tabId, p) {
   const sel = p.selector;
   // focus (and optionally select existing content to overwrite)
   const focused = await evaluate(
@@ -186,9 +224,7 @@ const KEYMAP = {
   Backspace: { keyCode: 8, key: "Backspace", code: "Backspace" },
 };
 
-async function cmdKey(p) {
-  const tabId = await ensureAgentTab();
-  await attach(tabId);
+async function cmdKey(tabId, p) {
   const k = KEYMAP[p.key];
   if (!k) throw new Error("unsupported_key");
   const base = { windowsVirtualKeyCode: k.keyCode, key: k.key, code: k.code };
@@ -203,9 +239,7 @@ async function cmdKey(p) {
   return { key: p.key };
 }
 
-async function cmdClick(p) {
-  const tabId = await ensureAgentTab();
-  await attach(tabId);
+async function cmdClick(tabId, p) {
   const rect = await evaluate(
     tabId,
     `(() => { const el = document.querySelector(${JSON.stringify(
@@ -220,9 +254,7 @@ async function cmdClick(p) {
   return { clicked: p.selector };
 }
 
-async function cmdSnapshot(p) {
-  const tabId = await ensureAgentTab();
-  await attach(tabId);
+async function cmdSnapshot(tabId, p) {
   const max = p.maxChars || 4000;
   return evaluate(
     tabId,
@@ -235,16 +267,12 @@ async function cmdSnapshot(p) {
   );
 }
 
-async function cmdScreenshot() {
-  const tabId = await ensureAgentTab();
-  await attach(tabId);
+async function cmdScreenshot(tabId) {
   const r = await cdp(tabId, "Page.captureScreenshot", { format: "png" });
   return { dataUrl: "data:image/png;base64," + r.data };
 }
 
-async function cmdEval(p) {
-  const tabId = await ensureAgentTab();
-  await attach(tabId);
+async function cmdEval(tabId, p) {
   return { value: await evaluate(tabId, `(${p.expression})`) };
 }
 
@@ -274,17 +302,13 @@ function resultsExpr(limit) {
   })()`;
 }
 
-async function cmdResults(p) {
-  const tabId = await ensureAgentTab();
-  await attach(tabId);
+async function cmdResults(tabId, p) {
   return evaluate(tabId, resultsExpr(p.limit || 10));
 }
 
 // Click into the Nth organic result at a human pace (trusted click, with a
 // navigate fallback if the click is intercepted).
-async function cmdOpenResult(p) {
-  const tabId = await ensureAgentTab(!!p.focus);
-  await attach(tabId);
+async function cmdOpenResult(tabId, p) {
   const idx = Math.max(1, p.n || 1) - 1;
   const info = await evaluate(
     tabId,
@@ -356,10 +380,19 @@ const HANDLERS = {
   eval: cmdEval,
 };
 
-async function dispatch(cmd, params) {
+async function dispatch(cmd, params = {}, session = "shared") {
+  // Session lifecycle from the bridge: an agent ended, or the bridge lists the
+  // sessions still alive after a reconnect.
+  if (cmd === "release") return closeSessions([session]);
+  if (cmd === "retain") {
+    const keep = new Set(params.sessions || []);
+    return closeSessions([...(await loadSessionTabs()).keys()].filter((s) => !keep.has(s)));
+  }
   const h = HANDLERS[cmd];
   if (!h) throw new Error("unknown_command:" + cmd);
-  return h(params || {});
+  const tabId = await tabFor(session, !!params.focus);
+  await attach(tabId);
+  return h(tabId, params);
 }
 
 // ---------- bridge connection ----------
@@ -391,7 +424,7 @@ function connect() {
     if (socket !== ws) return;
     backoff = 1000;
     const ua = (self.navigator && self.navigator.userAgent) || "";
-    send({ type: "hello", info: { userAgent: ua, ext: "chrome-bridge 0.1.0" } });
+    send({ type: "hello", info: { userAgent: ua, ext: "chrome-bridge 0.2.0" } });
   };
 
   ws.onmessage = async (event) => {
@@ -408,12 +441,14 @@ function connect() {
     }
     if (typeof msg.id === "number") {
       cancelIdleDetach();
+      inFlight++;
       try {
-        const result = await dispatch(msg.cmd, msg.params);
+        const result = await dispatch(msg.cmd, msg.params, msg.session || "shared");
         send({ id: msg.id, ok: true, result });
       } catch (err) {
         send({ id: msg.id, ok: false, error: String(err && err.message ? err.message : err) });
       } finally {
+        inFlight--;
         scheduleIdleDetach();
       }
     }

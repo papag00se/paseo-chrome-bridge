@@ -21,7 +21,7 @@ Paseo agent ──HTTP POST /rpc──▶ bridge (Node, 127.0.0.1:8787)
                         Chrome extension (MV3, in YOUR Chrome)
                                    │  chrome.debugger (CDP, trusted input)
                                    ▼
-                        your active, logged-in tab
+                        one background tab per agent
 ```
 
 - **`bridge/`** — Node server. Agent-facing HTTP (`/health`, `/rpc`) and
@@ -152,13 +152,15 @@ curl -s -X POST http://127.0.0.1:8787/rpc \
   -d '{"method":"search","params":{"query":"best ramen portland","engine":"google"}}'
 ```
 
-### RPC methods (`POST /rpc  {method, params}`)
+### RPC methods (`POST /rpc  {method, params, session?}`)
+
+`session` names the caller's tab. Calls without it share one tab (`shared`).
 
 | method       | params                                                                 | does |
 |--------------|------------------------------------------------------------------------|------|
 | `search`     | `query`, `engine` (`google`\|`bing`\|`duckduckgo`), `limit?`, `focus?`, pacing | navigate → human-type → Enter → parsed `results` |
 | `fetch`      | `url`, `waitMs?`, `maxChars?`                                          | atomic navigate + snapshot |
-| `navigate`   | `url`, `waitMs?`                                                        | go to URL in the active tab |
+| `navigate`   | `url`, `waitMs?`                                                        | go to URL in the session's tab |
 | `type`       | `selector`, `text`, `clearFirst?`, `perCharMinMs?`, `perCharMaxMs?`     | focus + trusted per-char typing |
 | `key`        | `key` (`Enter`\|`Tab`\|`Escape`\|`Backspace`)                           | trusted key event |
 | `click`      | `selector`                                                             | trusted mouse click at element center |
@@ -182,32 +184,45 @@ Pacing defaults (tunable per call): `perCharMinMs=55`, `perCharMaxMs=180`,
 If you set a token on the server, set the same value in `background.js` and
 send `Authorization: Bearer <token>` on `/rpc` calls.
 
-## One at a time
+## Agents, tabs and Google pacing
 
-The extension drives a single dedicated tab, so the bridge executes **all
-`/rpc` commands strictly one at a time**. A short FIFO queue (2 waiters)
-absorbs bursts — e.g. an agent batching two `web_search` calls just runs them
-back-to-back. When the queue is full, callers get an immediate
-`{"ok": false, "error": "QUEUE_FULL"}` and should retry after the current
-operation finishes. If a caller disconnects while its command is still
-queued, the command is dropped, never executed — an abandoned search must not
-type into the tab a minute later. The MCP shim additionally serializes its
-own calls and tells agents in the tool descriptions never to call
-`web_search`/`web_fetch` in parallel.
+- **One tab per agent.** The MCP server runs once per agent and tags every call
+  with its own session id. The extension keeps a separate background tab for
+  each session, so two agents never type into the same page. The session to tab
+  map is kept in `chrome.storage.session`, so a sleeping service worker does not
+  lose track of tabs.
+- **In order within an agent, side by side across agents.** The bridge runs one
+  session's commands strictly in order. Different sessions do not wait for each
+  other. If a caller disconnects while its command is still queued, the command
+  is dropped, never executed.
+- **Tabs close when the agent ends.** The MCP server holds `GET /session?id=…`
+  open for its whole life. When the agent process ends, for any reason, the OS
+  drops that connection and the bridge closes the agent's tab. When the
+  extension reconnects, the bridge sends the list of live sessions and the
+  extension closes every other agent tab.
+- **Google searches share one cooldown.** All agents search through the same
+  real browser, so simultaneous searches would look automated. Every call that
+  loads a Google results page (`search` on Google, or `fetch`/`navigate` to
+  `google.<tld>/search`) reserves the next slot 25–40 s after its own start. A
+  call inside that window is not run. It gets HTTP 429 with `Retry-After`
+  (seconds) and `{"ok": false, "error": "RATE_LIMITED", "retryAfterMs": …}`.
+  The MCP tool turns that into "RATE_LIMITED — retry in N seconds … call this
+  same tool again", so agents wait and retry instead of giving up. The spacing
+  values live in `bridge/constants.mjs`.
 
 ## Notes & limits
 
 - **Chrome must be running.** The extension lives inside Chrome, so nothing can
   drive (or launch) the browser while it is closed — same as the Claude/Codex
   extensions.
-- The extension drives a **dedicated background tab** in a "Paseo" tab group,
-  created on demand. It never hijacks the tab you are viewing, and never touches
-  app/PWA windows (e.g. Discord installed as a Chrome web app). Pass
-  `"focus": true` to `navigate` to bring that tab to the front.
+- Agent tabs are **background tabs** in a "Paseo" tab group, created on
+  demand. They never hijack the tab you are viewing, and never touch app/PWA
+  windows (e.g. Discord installed as a Chrome web app). Pass `"focus": true` to
+  `navigate` to bring the agent's tab to the front.
 - `chrome.debugger` shows a persistent info bar while attached. Harmless.
 - MV3 service workers sleep when idle; the extension reconnects automatically
   and a `chrome.alarms` keep-alive plus bridge pings keep the socket live.
-- CDP `Emulation.setFocusEmulationEnabled` prepares the dedicated target before
+- CDP `Emulation.setFocusEmulationEnabled` prepares the agent's tab before
   commands, including cached debugger attachments. This does not activate a tab
   or focus a desktop window. Failure is returned before input is dispatched;
   there is no synthetic DOM-click fallback. Reload the unpacked extension after
