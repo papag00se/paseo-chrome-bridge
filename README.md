@@ -54,7 +54,7 @@ In Chrome, open **chrome://extensions**, enable **Developer mode**, and use **Lo
 To add the Paseo 0.9.1 settings panel, in a separate terminal:
 
 ```bash
-cd ~/Work/chrome-bridge/plugin-recovered-v091
+cd ~/Work/chrome-bridge/plugin
 npm ci --legacy-peer-deps
 npm run typecheck
 paseo plugin install "$PWD"
@@ -66,7 +66,7 @@ Open **Settings → Plugins → Chrome Bridge → Settings**. Start/Stop control
 
 ## Compatibility
 
-The repository includes the original plugin in `plugin/` and the split-entry Paseo 0.9.1–0.9.x variant in `plugin-recovered-v091/`. The compatibility launcher currently expects `~/Work/chrome-bridge/bridge`; use that checkout location.
+The Paseo plugin in `plugin/` targets Paseo 0.9.1–0.9.x (the older plugin is in Git history). Its launcher expects `~/Work/chrome-bridge/bridge`; use that checkout location.
 
 The bridge uses your active logged-in browser. Configure `BRIDGE_TOKEN` if you need to restrict local callers, and keep agent actions within the permissions you grant. Browser/desktop operations are externally visible; the plugin does not authorize them on its own.
 

@@ -78,15 +78,15 @@ systemctl --user status chrome-bridge.service
 # loginctl enable-linger "$USER"
 ```
 
-**B. Paseo plugin (status panel).** For Paseo 0.9.1, use the recovered SDK-compatible entry point:
+**B. Paseo plugin (status panel).** For Paseo 0.9.1–0.9.x:
 
 ```bash
-cd ~/Work/chrome-bridge/plugin-recovered-v091
+cd ~/Work/chrome-bridge/plugin
 npm ci --legacy-peer-deps
 paseo plugin install "$PWD"
 ```
 
-Open the plugin panel in Paseo to start and monitor the bridge. Its launcher expects the checkout at `~/Work/chrome-bridge`; the repository is named `paseo-chrome-bridge` on GitHub. The older `plugin/` entry point is retained for reference. The plugin probes the port before starting the bridge, so it can coexist with the systemd service.
+Open the plugin panel in Paseo to start and monitor the bridge. Its launcher expects the checkout at `~/Work/chrome-bridge`; the repository is named `paseo-chrome-bridge` on GitHub. The plugin probes the port before starting the bridge, so it can coexist with the systemd service.
 
 ## Driving it from the agent
 
