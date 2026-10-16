@@ -20,9 +20,9 @@ Give a Paseo agent access to your existing Chrome session through a local bridge
 | --- | --- |
 | Existing browser session | Work in your normal logged-in Chrome instead of launching a second profile |
 | Local transport | A Node bridge on `127.0.0.1` connects agents and the MV3 extension |
-| Browser MCP tools | Search, fetch, inspect, click, type, and screenshot operations |
+| Browser MCP tools | Search, inspect, click controls or screenshot coordinates, scroll nested menus, fill rich text, select dropdown options, use keyboard shortcuts, and capture screenshots |
 | Native plugin settings | Bridge status, extension status, and Start/Stop controls |
-| One tab per agent | Each agent works in its own background tab; its calls run in order |
+| One tab per agent | Each agent works in its own background tab; its calls run in order; explicit `web_focus` reveals its page to the user |
 | Google search pacing | Google searches from all agents are spaced out; agents get a clear "retry in N seconds" |
 | Companion utilities | Optional native desktop MCP tools and provider launch guards |
 
@@ -64,6 +64,12 @@ Open **Settings → Plugins → Chrome Bridge → Settings**. Start/Stop control
 
 ![Chrome Bridge settings in Paseo: bridge and extension status, Start/Stop controls and one-time extension setup](docs/media/settings.png)
 
+## Form controls
+
+Use `web_scroll` for nested menus/dialogs and browser-viewport coordinate clicks for custom controls without semantic selectors. Use `web_select` for native dropdowns; choose an exact label, value, or zero-based option index from `web_snapshot`. Selection is committed with trusted keyboard input and verified. `web_key` supports arrows, Home/End, PageUp/PageDown, Delete, Space, letters/digits, modifiers, and repetition. Use `web_fill` for long input/textarea/rich-text replacements; `web_type(clearFirst: true)` also clears rich text and handles empty replacements. Neither exposes passwords or uses the clipboard. Snapshots include checkbox/radio state and native option labels/selection, but never input values.
+
+After upgrading, **reload Chrome Bridge in `chrome://extensions`**, then refresh/reconnect the agent's MCP tools (or start a new agent). No Chrome or Paseo daemon restart is required. Existing MCP processes retain their old tool definitions until refreshed; ending an agent closes its own browser tab, so save any open form before ending/restarting the agent. Extension reload alone retains live-session tabs.
+
 ## Compatibility
 
 The Paseo plugin in `plugin/` targets Paseo 0.11.2–0.11.x, typechecked against the pinned 0.11.2 SDK (older ports remain in Git history). Its launcher expects `~/Work/chrome-bridge/bridge`; use that checkout location.
@@ -75,8 +81,7 @@ The optional native desktop tools target Linux/Hyprland and are documented separ
 ## Development
 
 ```bash
-node --test mcp/tests/*.test.mjs
-node --test guard/*.test.mjs
+node --test mcp/tests/*.test.mjs bridge/tests/*.test.mjs guard/*.test.mjs
 ```
 
 [Full setup, MCP tools, and transport details →](docs/REFERENCE.md) · [Desktop MCP](mcp/DESKTOP.md) · [Provider guards](guard/README.md)

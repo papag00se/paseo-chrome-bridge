@@ -37,13 +37,25 @@ test("browser snapshot selectors address real controls and omit hidden controls 
       <button id="edit:page">Edit</button><button>Preview</button>
       <button disabled>Save</button><button style="display:none">Hidden</button>
       <input type="hidden" value="HIDDEN_VALUE"><a href="https://example.test">Public page</a>
+      <input id="checked" type="checkbox" checked><input id="unchecked" type="radio">
+      <select id="month"><option value="SECRET_OPTION_VALUE">Choose</option><option selected>February</option><optgroup disabled><option>Locked</option></optgroup></select>
+      <div role="option" id="custom-option">Custom choice</div>
     </main>`);
     const snapshot = await page.evaluate(({ source }) => (0, eval)(`(${source})(20000,150)`), { source: inspectPage.toString() });
     assert.equal(snapshot.title, "Editor");
     assert.equal(snapshot.elements.find(el => el.label === "Destination").selector, "#url");
     assert.equal(snapshot.elements.find(el => el.label === "Save").disabled, true);
     assert.equal(snapshot.elements.some(el => el.label === "Hidden"), false);
-    assert.doesNotMatch(JSON.stringify(snapshot), /PRIVATE_VALUE|PRIVATE_PASSWORD|HIDDEN_VALUE/);
+    assert.equal(snapshot.elements.find(el => el.selector === '#checked').checked, true);
+    assert.equal(snapshot.elements.find(el => el.selector === '#unchecked').checked, false);
+    const month = snapshot.elements.find(el => el.selector === '#month');
+    assert.deepEqual(month.options, [
+      {index: 0, label: 'Choose', selected: false, disabled: false},
+      {index: 1, label: 'February', selected: true, disabled: false},
+      {index: 2, label: 'Locked', selected: false, disabled: true},
+    ]);
+    assert.equal(snapshot.elements.find(el => el.selector === '#custom-option').role, 'option');
+    assert.doesNotMatch(JSON.stringify(snapshot), /PRIVATE_VALUE|PRIVATE_PASSWORD|HIDDEN_VALUE|SECRET_OPTION_VALUE/);
     for (const element of snapshot.elements) assert.equal(await page.locator(element.selector).count(), 1);
     await page.locator(snapshot.elements.find(el => el.label === "Edit").selector).click();
     const limited = await page.evaluate(({ source }) => (0, eval)(`(${source})(500,1)`), { source: inspectPage.toString() });
@@ -92,7 +104,7 @@ test("MCP stdio end-to-end: discovery, typed commands, image output, errors, ses
   try {
     await client.connect(transport);
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map(t => t.name).sort(), ["web_search", "web_fetch", "web_snapshot", "web_click", "web_type", "web_key", "web_wait", "web_screenshot"].sort());
+    assert.deepEqual(tools.map(t => t.name).sort(), ["web_search", "web_fetch", "web_snapshot", "web_click", "web_type", "web_fill", "web_select", "web_focus", "web_scroll", "web_key", "web_wait", "web_screenshot"].sort());
     const snapshot = await client.callTool({ name: "web_snapshot", arguments: {} });
     assert.equal(JSON.parse(snapshot.content[0].text).title, "Authenticated editor");
     assert.equal(calls.at(-1).method, "eval");
@@ -102,8 +114,39 @@ test("MCP stdio end-to-end: discovery, typed commands, image output, errors, ses
     assert.deepEqual(sessionLinks, [session]);
     await client.callTool({ name: "web_click", arguments: { selector: "#edit" } });
     assert.deepEqual(calls.at(-1), { method: "click", params: { selector: "#edit" }, session });
+    await client.callTool({name: 'web_click', arguments: {x: 10, y: 20, clickCount: 2}});
+    assert.deepEqual(calls.at(-1).params, {x: 10, y: 20, clickCount: 2});
+    const beforeInvalidClick = calls.length;
+    for (const choice of [{}, {x: 10}, {selector: '#edit', x: 10, y: 20}]) {
+      const invalid = await client.callTool({name: 'web_click', arguments: choice});
+      assert.equal(invalid.isError, true);
+    }
+    assert.equal(calls.length, beforeInvalidClick);
+    await client.callTool({name: 'web_scroll', arguments: {selector: '#list', deltaY: 200}});
+    assert.equal(calls.at(-1).method, 'scroll');
+    assert.deepEqual(calls.at(-1).params, {selector: '#list', deltaX: 0, deltaY: 200});
     await client.callTool({ name: "web_type", arguments: { selector: "#url", text: "hello", clearFirst: true } });
     assert.deepEqual(calls.at(-1).params, { selector: "#url", text: "hello", clearFirst: true, perCharMinMs: 10, perCharMaxMs: 25 });
+    await client.callTool({ name: 'web_fill', arguments: {selector: '#history', text: 'Long work history. '.repeat(200)} });
+    assert.deepEqual(calls.at(-1).params, {selector: '#history', text: 'Long work history. '.repeat(200)});
+    assert.equal(calls.at(-1).method, 'fill');
+    for (const choice of [{label: 'February'}, {value: '2'}, {index: 2}]) {
+      await client.callTool({name: 'web_select', arguments: {selector: '#month', ...choice}});
+      assert.equal(calls.at(-1).method, 'select');
+      assert.deepEqual(calls.at(-1).params, {selector: '#month', ...choice});
+    }
+    const beforeInvalidSelect = calls.length;
+    for (const choice of [{}, {label: 'February', index: 2}, {index: -1}]) {
+      const invalid = await client.callTool({name: 'web_select', arguments: {selector: '#month', ...choice}});
+      assert.equal(invalid.isError, true);
+    }
+    assert.equal(calls.length, beforeInvalidSelect);
+    await client.callTool({name: 'web_key', arguments: {key: 'ArrowDown', repeat: 3}});
+    assert.deepEqual(calls.at(-1).params, {key: 'ArrowDown', modifiers: [], repeat: 3});
+    await client.callTool({name: 'web_key', arguments: {key: 'a', modifiers: ['Control']}});
+    assert.deepEqual(calls.at(-1).params, {key: 'a', modifiers: ['Control'], repeat: 1});
+    await client.callTool({name: 'web_focus', arguments: {}});
+    assert.equal(calls.at(-1).method, 'focus');
     const image = await client.callTool({ name: "web_screenshot", arguments: {} });
     assert.deepEqual(image.content[0], { type: "image", mimeType: "image/png", data: png });
     const wait = await client.callTool({ name: "web_wait", arguments: { text: "Ready", timeoutMs: 10 } });

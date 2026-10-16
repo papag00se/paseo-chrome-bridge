@@ -162,8 +162,12 @@ curl -s -X POST http://127.0.0.1:8787/rpc \
 | `fetch`      | `url`, `waitMs?`, `maxChars?`                                          | atomic navigate + snapshot |
 | `navigate`   | `url`, `waitMs?`                                                        | go to URL in the session's tab |
 | `type`       | `selector`, `text`, `clearFirst?`, `perCharMinMs?`, `perCharMaxMs?`     | focus + trusted per-char typing |
-| `key`        | `key` (`Enter`\|`Tab`\|`Escape`\|`Backspace`)                           | trusted key event |
-| `click`      | `selector`                                                             | trusted mouse click at element center |
+| `key`        | `key`, `modifiers?` (`Alt`, `Control`, `Meta`, `Shift`), `repeat?` (1–100) | trusted navigation/editing key or ASCII letter/digit |
+| `fill`       | `selector`, `text`                                                      | replace an editable field with one trusted insertion |
+| `select`     | `selector`, exactly one of `label`, `value`, `index` (zero-based)          | commit and verify a native single-select choice |
+| `focus`      | —                                                                      | reveal this session's existing tab/window without navigation |
+| `click`      | `selector` or viewport `x`/`y`, `button?`, `clickCount?` (1–3)              | trusted mouse click at a control or screenshot point |
+| `scroll`     | `selector?`, `deltaX?`, `deltaY?` (pixels, ±10,000)                         | trusted wheel input on the page or nested list |
 | `waitText`   | `text`, `timeoutMs?`                                                    | wait until page contains text |
 | `snapshot`   | `maxChars?`                                                            | `{title, url, text, links[]}` |
 | `results`    | `limit?`                                                              | Google-aware `{query, count, results:[{rank,title,url,snippet}]}` |
@@ -173,6 +177,34 @@ curl -s -X POST http://127.0.0.1:8787/rpc \
 
 Pacing defaults (tunable per call): `perCharMinMs=55`, `perCharMaxMs=180`,
 `thinkMinMs=500`, `thinkMaxMs=1500` — set these to match *your* natural cadence.
+
+## Profile forms and editor controls
+
+The MCP surface includes `web_fill`, `web_select`, `web_scroll`, and `web_focus` in addition to search, fetch, snapshot, click, type, key, wait, and screenshot. Examples:
+
+```json
+{"name":"web_select","arguments":{"selector":"#start-month","label":"February"}}
+{"name":"web_select","arguments":{"selector":"#start-year","value":"2022"}}
+{"name":"web_key","arguments":{"key":"ArrowDown","repeat":2}}
+{"name":"web_key","arguments":{"key":"Tab","modifiers":["Shift"]}}
+{"name":"web_key","arguments":{"key":"a","modifiers":["Control"]}}
+{"name":"web_fill","arguments":{"selector":"#work-history","text":"Detailed work history..."}}
+{"name":"web_click","arguments":{"x":400,"y":250,"clickCount":2}}
+{"name":"web_scroll","arguments":{"selector":"#options-list","deltaY":400}}
+{"name":"web_focus","arguments":{}}
+```
+
+- Supported named keys: Enter, Tab, Escape, Backspace, Delete, ArrowLeft, ArrowUp, ArrowRight, ArrowDown, Home, End, PageUp, PageDown, Space. ASCII letters and digits are also supported. Modifiers describe shortcuts; literal letters use the casing provided in `key`.
+- `web_select` addresses native single selects, including placeholder and disabled options. It rejects ambiguous labels/values, disabled options/controls, multiple selects, and listboxes (`size > 1`). The native popup is opened with Alt+ArrowDown, navigated before committing with Enter, and the resulting selected index is verified. This emits one trusted change, not a series of intermediate autosaves. Custom comboboxes still use click/type/key. Do not click native `<option>` elements: their layout rectangles are not clickable page coordinates.
+- `web_fill` replaces up to 20,000 characters in an input, textarea, or contenteditable with trusted input, without a clipboard or per-character delays. `web_type` remains paced and limited to 1,000 characters. `clearFirst` selects only the target editor's contents and deletes them even when the replacement is empty. Password fields, non-editable fields, and replacements exceeding a field's maxlength are rejected before mutation. Typing or filling a select is an error, never a fake success.
+- `web_snapshot` adds `checked` for checkboxes/radios and ARIA check controls. Native selects expose `multiple` and up to 500 `options` with `index`, `label`, `selected`, `disabled`, plus `optionsTruncated`. Option values and ordinary field values are deliberately omitted. ARIA options/checkboxes/radios/menu items and keyboard-focusable controls are discoverable.
+- Selector-based `web_click` rejects native options, zero-size/hidden, disabled, and obscured controls before mouse input. Coordinate clicks require a complete x/y pair within the current browser viewport, from a fresh `web_screenshot`, never desktop coordinates. Clicks support left/right/middle buttons and click counts 1–3. The tool never substitutes a DOM click.
+- `web_scroll` sends wheel input at the viewport center or the center of a visible selector, enabling nested menus and dialog scrolling without desktop control. Positive deltas scroll down/right; inspect afterward because wheel input does not guarantee an element can scroll.
+- `web_focus` is the only explicit foreground operation. Routine commands remain on the agent's own background target. Use it when the user needs to see or take over the page.
+
+### Activating an update
+
+Reload the unpacked extension from `chrome://extensions`, then refresh/reconnect the agent's MCP server so it discovers the new tools and keyboard schema. A Chrome or Paseo daemon restart is unnecessary. Existing MCP server processes have already imported their tool definitions and do not hot-reload source edits. If your agent cannot refresh its MCP connection, start a fresh agent **after saving the current form**: ending the old agent releases its tab. Extension reload itself preserves the live-session tab mapping in `chrome.storage.session`.
 
 ## Configuration
 

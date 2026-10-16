@@ -12,6 +12,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { registerBrowserTools } from "./browser-tools.mjs";
+import { VERSION } from "../bridge/constants.mjs";
 
 const PORT = Number(process.env.BRIDGE_PORT || 8787);
 const TOKEN = process.env.BRIDGE_TOKEN || "";
@@ -104,7 +105,7 @@ function errorResult(err) {
   return { content: [{ type: "text", text: message }], isError: true };
 }
 
-const server = new McpServer({ name: "chrome-bridge", version: "0.1.0" });
+const server = new McpServer({ name: "chrome-bridge", version: VERSION });
 
 server.registerTool(
   "web_search",

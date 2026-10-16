@@ -1,7 +1,7 @@
 {
   "name": "chrome-bridge-mcp",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "MCP tools for search, reading and interactive use of the logged-in Chrome bridge.",
   "main": "server.mjs",

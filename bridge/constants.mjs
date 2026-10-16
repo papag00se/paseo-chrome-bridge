@@ -1,7 +1,7 @@
 // Named constants shared by the bridge. Environment variables are reserved for
 // per-machine settings (BRIDGE_PORT, BRIDGE_TOKEN).
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
 export const DEFAULT_PORT = 8787;
 export const HOST = "127.0.0.1";
 

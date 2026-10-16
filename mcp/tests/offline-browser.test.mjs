@@ -21,7 +21,7 @@ test('disconnected companion leaves discovery available and returns a browser to
   });
   try {
     await client.connect(transport);
-    assert.equal((await client.listTools()).tools.length, 8);
+    assert.equal((await client.listTools()).tools.length, 12);
     const result = await client.callTool({name:'web_snapshot', arguments:{}});
     assert.equal(result.isError, true);
     assert.match(result.content[0].text, /extension_not_connected/);

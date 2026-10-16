@@ -22,7 +22,7 @@ export function inspectPage(maxChars, maxElements) {
     }
     return parts.join(" > ");
   }
-  const nodes = [...document.querySelectorAll('a[href],button,input:not([type="hidden"]),textarea,select,[role="button"],[role="tab"],[role="combobox"],[contenteditable="true"]')].filter(visible);
+  const nodes = [...document.querySelectorAll('a[href],button,input:not([type="hidden"]),textarea,select,[role="button"],[role="tab"],[role="combobox"],[role="option"],[role="checkbox"],[role="radio"],[role="menuitem"],[tabindex]:not([tabindex="-1"]),[contenteditable="true"]')].filter(visible);
   const elements = nodes.slice(0, maxElements).map(el => {
     const labelledBy = (el.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
       .map(id => document.getElementById(id)?.textContent || "").join(" ");
@@ -36,6 +36,13 @@ export function inspectPage(maxChars, maxElements) {
       type: el.getAttribute("type") || undefined,
       disabled: el.disabled === true || el.getAttribute("aria-disabled") === "true",
       ...(el.localName === "a" ? { href: el.href } : {}),
+      ...(el.matches('input[type="checkbox"],input[type="radio"]') ? { checked: el.checked } : {}),
+      ...(el.hasAttribute('aria-checked') ? { checked: el.getAttribute('aria-checked') } : {}),
+      ...(el.localName === 'select' ? {
+        multiple: el.multiple,
+        options: [...el.options].slice(0, 500).map((o, index) => ({ index, label: o.label, selected: o.selected, disabled: o.disabled || !!o.closest('optgroup[disabled]') })),
+        optionsTruncated: el.options.length > 500,
+      } : {}),
     };
   });
   return {
@@ -75,18 +82,53 @@ export function registerBrowserTools(server, { rpc, errorResult }) {
     return asText(result.value);
   });
 
-  register("web_click", "Click a visible control using trusted browser input. This can change an account or submit a purchase: use only within the user's authorized task and obtain confirmation for consequential actions. Prefer selectors from web_snapshot.", { selector }, false,
-    async params => asText(await rpc("click", params)));
+  register("web_click", "Click a visible, unobscured control using trusted browser input. Provide either a CSS selector from web_snapshot or x/y viewport coordinates from a fresh web_screenshot (not desktop coordinates). Supports left/right/middle and single/double/triple clicks. For native select options use web_select. This can change an account or submit a purchase: use only within the user's authorized task and obtain confirmation for consequential actions.", {
+    selector: selector.optional(),
+    x: z.number().min(0).optional(),
+    y: z.number().min(0).optional(),
+    button: z.enum(['left', 'right', 'middle']).optional(),
+    clickCount: z.number().int().min(1).max(3).optional(),
+  }, false, async params => {
+    const coordinates = params.x !== undefined || params.y !== undefined;
+    if ((params.selector !== undefined) === coordinates || (coordinates && (params.x === undefined || params.y === undefined))) throw new Error('provide_selector_or_coordinates');
+    return asText(await rpc("click", params));
+  });
 
-  register("web_type", "Type into a field using trusted browser input. Does not press Enter. Typing may trigger autosave; do not enter passwords, payment credentials or other secrets through this tool. Let the user handle login.", {
+  register("web_scroll", "Scroll the page or a visible scrollable control using trusted wheel input. Positive deltaY scrolls down; deltaX scrolls right, in pixels. Provide selector to scroll a nested list or dialog; otherwise scroll at the viewport center. Inspect web_snapshot or a fresh web_screenshot afterward.", {
+    selector: selector.optional(),
+    deltaX: z.number().min(-10000).max(10000).default(0),
+    deltaY: z.number().min(-10000).max(10000).default(0),
+  }, false, async params => asText(await rpc('scroll', params)));
+
+  register("web_type", "Type into an editable field using trusted browser input. clearFirst replaces all text, including rich-text editors; empty text with clearFirst clears the field. For long replacements use web_fill; for native dropdowns use web_select. Does not press Enter. Typing may trigger autosave; do not enter passwords, payment credentials or other secrets through this tool. Let the user handle login.", {
     selector,
     text: z.string().max(1000),
     clearFirst: z.boolean().default(false),
   }, false, async params => asText(await rpc("type", { ...params, perCharMinMs: 10, perCharMaxMs: 25 })));
 
-  register("web_key", "Press a key in the current Chrome page. Enter can submit forms; use only for authorized actions.", {
-    key: z.enum(["Enter", "Tab", "Escape", "Backspace"]),
+  register("web_fill", "Replace the contents of a visible input, textarea, or rich-text editor with one trusted text insertion, without using the clipboard. Supports long work histories without per-character timeouts. May trigger autosave. Never enter passwords, payment credentials or other secrets; let the user handle login.", {
+    selector,
+    text: z.string().max(20000),
+  }, false, async params => asText(await rpc("fill", params)));
+
+  register("web_select", "Choose an option in a visible native single-select dropdown by exact label, value, or zero-based index (provide exactly one). Uses trusted keyboard input and verifies the committed selection; may trigger autosave. Use web_snapshot options to choose the intended option. Custom comboboxes use web_click, web_type and web_key instead.", {
+    selector,
+    label: z.string().max(1000).optional(),
+    value: z.string().max(1000).optional(),
+    index: z.number().int().min(0).max(10000).optional(),
+  }, false, async params => {
+    if (['label', 'value', 'index'].filter(k => params[k] !== undefined).length !== 1) throw new Error('select_requires_exactly_one_label_value_or_index');
+    return asText(await rpc("select", params));
+  });
+
+  register("web_key", "Press a navigation/editing key or ASCII letter/digit in the current Chrome page, optionally with modifiers and repetition. Keys: Enter, Tab, Escape, Backspace, Delete, ArrowLeft/Up/Right/Down, Home, End, PageUp/Down, Space, a-z, A-Z, 0-9. Supports Control+a, Shift+Tab and selection shortcuts. Enter can submit forms; use only for authorized actions.", {
+    key: z.string().min(1).max(20),
+    modifiers: z.array(z.enum(['Alt', 'Control', 'Meta', 'Shift'])).max(4).default([]),
+    repeat: z.number().int().min(1).max(100).default(1),
   }, false, async params => asText(await rpc("key", params)));
+
+  register("web_focus", "Bring only this agent's existing Chrome tab and window to the foreground so the user can see and interact with the page. Does not navigate, reload, or touch another agent's tab. Use when the user asks to see the working page.", {}, false,
+    async params => asText(await rpc("focus", params)));
 
   register("web_wait", "Wait for visible page text without navigating. Returns found=false on timeout; follow with web_snapshot to inspect the result.", {
     text: z.string().max(1000),
