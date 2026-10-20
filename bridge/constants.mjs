@@ -17,3 +17,9 @@ export const GOOGLE_SEARCH_JITTER_MS = 15_000;
 export const EXTENSION_COMMAND_TIMEOUT_MS = 30_000;
 export const EXTENSION_PING_INTERVAL_MS = 20_000;
 export const MAX_BODY_BYTES = 5_000_000;
+
+// An agent's /session connection drops whenever its MCP server process is
+// restarted (host idle shutdowns, reconnects), not only when the agent ends.
+// The agent's next MCP process reuses the same session id, so the tab is kept
+// for this long after the last connection drops and is adopted on reconnect.
+export const SESSION_RELEASE_GRACE_MS = 12 * 60 * 60 * 1000;

@@ -19,9 +19,11 @@ const TOKEN = process.env.BRIDGE_TOKEN || "";
 const BASE = `http://127.0.0.1:${PORT}`;
 const AUTH = TOKEN ? { authorization: `Bearer ${TOKEN}` } : {};
 
-// One MCP server process runs per agent, so this id is the agent's browser
-// session: its own tab, and its own command order.
-const SESSION = randomUUID();
+// The agent's browser session: its own tab and its own command order. Hosts
+// restart MCP server processes (idle shutdown, reconnect) during one agent's
+// life, so the id comes from the agent, not the process, letting a restarted
+// process adopt the same tab. Falls back to a per-process id.
+const SESSION = process.env.PI_SESSION_ID || process.env.PASEO_AGENT_ID || process.env.CLAUDE_SESSION_ID || randomUUID();
 
 // Held open while this process lives. When the agent exits, the OS drops the
 // connection and the bridge closes this agent's tab. Opened on first browser

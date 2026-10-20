@@ -22,6 +22,7 @@ import {
   EXTENSION_PING_INTERVAL_MS,
   HOST,
   MAX_BODY_BYTES,
+  SESSION_RELEASE_GRACE_MS,
   VERSION,
 } from "./constants.mjs";
 import { createGoogleCooldown, isGoogleSearch } from "./google-cooldown.mjs";
@@ -97,6 +98,7 @@ function sessionName(value) {
 
 export function createBridge({
   token = "",
+  releaseGraceMs = SESSION_RELEASE_GRACE_MS,
   cooldown = createGoogleCooldown(),
   log = (...a) => console.log(new Date().toISOString(), ...a),
 } = {}) {
@@ -127,6 +129,7 @@ export function createBridge({
   // an abandoned command must not type into the tab a minute later.
   const chains = new Map(); // session -> promise tail
   const live = new Map(); // session -> open /session connections
+  const draining = new Map(); // session -> pending release timer (tab kept for reconnect)
 
   function inSession(session, task, isAbandoned = () => false) {
     const result = (chains.get(session) || Promise.resolve()).then(() => {
@@ -150,7 +153,7 @@ export function createBridge({
   }
 
   function retainLiveSessions() {
-    const sessions = [DEFAULT_SESSION, ...live.keys()];
+    const sessions = [DEFAULT_SESSION, ...live.keys(), ...draining.keys()];
     sendToExtension("retain", { sessions }, null).catch((err) => log("retain failed", err.message));
   }
 
@@ -183,11 +186,14 @@ export function createBridge({
         });
       }
 
-      // Held open for the agent's lifetime. The OS closes it when the agent
-      // process ends, however it ends, and that closes the agent's tab.
+      // Held open by the agent's MCP process. When the last connection drops the
+      // tab is kept for releaseGraceMs so a restarted process for the same agent
+      // (same session id) adopts it; only then is the tab closed.
       if (req.method === "GET" && url.pathname === "/session") {
         const session = sessionName(url.searchParams.get("id"));
         if (session === DEFAULT_SESSION) return json(res, 400, { ok: false, error: "session_id_required" });
+        clearTimeout(draining.get(session));
+        draining.delete(session);
         live.set(session, (live.get(session) || 0) + 1);
         res.writeHead(200, { "content-type": "text/plain", "cache-control": "no-store" });
         res.write("open\n");
@@ -195,7 +201,12 @@ export function createBridge({
           const left = (live.get(session) || 1) - 1;
           if (left > 0) return live.set(session, left);
           live.delete(session);
-          release(session);
+          const timer = setTimeout(() => {
+            draining.delete(session);
+            release(session);
+          }, releaseGraceMs);
+          timer.unref();
+          draining.set(session, timer);
         });
         return;
       }
@@ -306,6 +317,8 @@ export function createBridge({
   pinger.unref();
 
   function close() {
+    for (const timer of draining.values()) clearTimeout(timer);
+    draining.clear();
     clearInterval(pinger);
     for (const client of wss.clients) client.terminate();
     wss.close();
