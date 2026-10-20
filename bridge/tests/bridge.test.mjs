@@ -145,6 +145,22 @@ test("a restarted agent process reconnecting within the grace period keeps its t
   }
 });
 
+test("a freshly restarted bridge does not prune agent tabs before agents can reconnect", async () => {
+  const b = await start({ releaseGraceMs: 300 });
+  try {
+    b.ext.send(JSON.stringify({ type: "hello", info: { userAgent: "test" } }));
+    await new Promise((r) => setTimeout(r, 100));
+    assert.ok(!b.received.some((m) => m.cmd === "retain"), "pruned before agents reconnected");
+    const held = http.get(`${b.base}/session?id=agent-a`);
+    await new Promise((resolve) => held.on("response", resolve));
+    await until(() => b.received.some((m) => m.cmd === "retain"));
+    assert.ok(b.received.find((m) => m.cmd === "retain").params.sessions.includes("agent-a"));
+    held.destroy();
+  } finally {
+    await b.close();
+  }
+});
+
 test("only Google results pages count as Google searches", () => {
   assert.equal(isGoogleSearch("search", {}), true);
   assert.equal(isGoogleSearch("search", { engine: "bing" }), false);

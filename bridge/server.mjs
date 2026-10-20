@@ -152,6 +152,22 @@ export function createBridge({
     inSession(session, () => sendToExtension("release", {}, session)).catch(() => {});
   }
 
+  // After a bridge restart no agent has reconnected yet, so pruning right away
+  // would close every agent tab. Defer the first prune until agents have had the
+  // release grace period to reconnect.
+  const startedAt = Date.now();
+  let deferredRetain = null;
+  function retainWhenSafe() {
+    const wait = startedAt + releaseGraceMs - Date.now();
+    if (wait <= 0) return retainLiveSessions();
+    if (deferredRetain) return;
+    deferredRetain = setTimeout(() => {
+      deferredRetain = null;
+      retainLiveSessions();
+    }, wait);
+    deferredRetain.unref();
+  }
+
   function retainLiveSessions() {
     const sessions = [DEFAULT_SESSION, ...live.keys(), ...draining.keys()];
     sendToExtension("retain", { sessions }, null).catch((err) => log("retain failed", err.message));
@@ -283,7 +299,7 @@ export function createBridge({
         extInfo = msg.info || null;
         log("extension hello", extInfo && extInfo.userAgent);
         // Close tabs of agents that ended while the extension or bridge was away.
-        retainLiveSessions();
+        retainWhenSafe();
         return;
       }
       if (msg.type === "pong") return;
@@ -317,6 +333,7 @@ export function createBridge({
   pinger.unref();
 
   function close() {
+    clearTimeout(deferredRetain);
     for (const timer of draining.values()) clearTimeout(timer);
     draining.clear();
     clearInterval(pinger);
