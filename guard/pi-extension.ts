@@ -1,6 +1,8 @@
 // Loaded explicitly by the Paseo Pi launcher. Metadata checks only.
 const required = ['web_search','web_fetch','web_snapshot','web_click','web_type','web_key','web_wait','web_screenshot'];
-const banned = /(^|[^a-z0-9])(?:cua_repl|node_repl)(?:[^a-z0-9]|$)|unified-computer-use/i;
+// Paseo's built-in browser tools (paseo_browser_*) open a separate Chromium
+// without the user's cookies; only the Chrome Bridge web_* tools are allowed.
+const banned = /(^|[^a-z0-9])(?:cua_repl|node_repl)(?:[^a-z0-9]|$)|unified-computer-use|(^|[^a-z0-9])(?:paseo_)?browser_[a-z_]+/i;
 export default function (pi: any) {
   function inspect() {
     const tools = pi.getAllTools();
@@ -32,7 +34,7 @@ export default function (pi: any) {
   });
   pi.on('tool_call', async (event: any) => {
     try {
-      if (banned.test(event.toolName) || (event.toolName === 'mcp' && banned.test(JSON.stringify(event.input)))) throw new Error('Banned computer-control integration');
+      if (banned.test(event.toolName) || (event.toolName === 'mcp' && banned.test(JSON.stringify(event.input))) || (event.toolName.startsWith('mcp__') && banned.test(String(event.input?.tool ?? '')))) throw new Error('Banned computer-control integration. Use the Chrome Bridge web_* tools only.');
       inspect();
     } catch (error: any) { return {block:true,reason:`CHROME_BRIDGE_GUARD: ${error.message}`}; }
   });

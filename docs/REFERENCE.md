@@ -229,7 +229,7 @@ send `Authorization: Bearer <token>` on `/rpc` calls.
   is dropped, never executed.
 - **Tabs survive MCP restarts and close after the agent ends.** The MCP server
   holds `GET /session?id=…` open for its whole life. The id comes from the agent
-  (`PI_SESSION_ID`, `PASEO_AGENT_ID` or `CLAUDE_SESSION_ID`; a random id only as
+  (`PASEO_AGENT_ID`, then `PI_SESSION_ID` or `CLAUDE_SESSION_ID`; a random id only as
   a fallback), so when a host restarts the MCP process (for example an idle
   shutdown) the new process adopts the same tab. When the last connection
   drops, the bridge keeps the tab for `SESSION_RELEASE_GRACE_MS` (12 h) and
