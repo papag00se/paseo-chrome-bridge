@@ -7,8 +7,8 @@ import { createGoogleCooldown, isGoogleSearch } from "../google-cooldown.mjs";
 
 // Starts a real bridge plus a stand-in extension on a real WebSocket. The
 // stand-in records every command and answers after `delayMs`.
-async function start({ cooldown, delayMs = 0 } = {}) {
-  const bridge = createBridge({ cooldown, log: () => {} });
+async function start({ cooldown, delayMs = 0, releaseGraceMs = 0 } = {}) {
+  const bridge = createBridge({ cooldown, releaseGraceMs, log: () => {} });
   await new Promise((resolve) => bridge.server.listen(0, "127.0.0.1", resolve));
   const base = `http://127.0.0.1:${bridge.server.address().port}`;
   const received = [];
@@ -118,6 +118,44 @@ test("an agent's tab is released when its process connection drops, and only liv
     await until(() => b.received.some((m) => m.cmd === "retain"));
     assert.deepEqual(b.received.find((m) => m.cmd === "retain").params.sessions.sort(), ["agent-b", "shared"]);
     kept.destroy();
+  } finally {
+    await b.close();
+  }
+});
+
+test("a restarted agent process reconnecting within the grace period keeps its tab", async () => {
+  const b = await start({ releaseGraceMs: 300 });
+  try {
+    const first = http.get(`${b.base}/session?id=agent-a`);
+    await new Promise((resolve) => first.on("response", resolve));
+    first.destroy(); // MCP process shut down (e.g. host idle timeout)
+    await new Promise((r) => setTimeout(r, 100));
+    const second = http.get(`${b.base}/session?id=agent-a`); // restarted process, same agent
+    await new Promise((resolve) => second.on("response", resolve));
+    // While draining, a reconnecting extension must not close the tab either.
+    b.ext.send(JSON.stringify({ type: "hello", info: { userAgent: "test" } }));
+    await until(() => b.received.some((m) => m.cmd === "retain"));
+    assert.ok(b.received.find((m) => m.cmd === "retain").params.sessions.includes("agent-a"));
+    await new Promise((r) => setTimeout(r, 400));
+    assert.ok(!b.received.some((m) => m.cmd === "release"), "tab released despite reconnect");
+    second.destroy();
+    await until(() => b.received.some((m) => m.cmd === "release"));
+  } finally {
+    await b.close();
+  }
+});
+
+test("a freshly restarted bridge does not prune agent tabs before agents can reconnect", async () => {
+  const b = await start({ releaseGraceMs: 300 });
+  try {
+    b.ext.send(JSON.stringify({ type: "hello", info: { userAgent: "test" } }));
+    await new Promise((r) => setTimeout(r, 100));
+    assert.ok(!b.received.some((m) => m.cmd === "retain"), "pruned before agents reconnected");
+    const held = http.get(`${b.base}/session?id=agent-a`);
+    await new Promise((resolve) => held.on("response", resolve));
+    await until(() => b.received.some((m) => m.cmd === "retain"));
+    assert.ok(b.received.find((m) => m.cmd === "retain").params.sessions.includes("agent-a"));
+    held.destroy();
   } finally {
     await b.close();
   }

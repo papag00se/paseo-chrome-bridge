@@ -78,6 +78,10 @@ access to the files.
 
 Changing tool registration does not authorize bypassing a blocked action.
 
+## Paseo's built-in browser tools
+
+Paseo's own `paseo_browser_*` tools drive a separate browser without the user's cookies and must never be used. They are off for every provider through `daemon.browserTools.enabled: false` in `~/.paseo/config.json` (applied live with `paseo reload --json`; the tools disappear from each agent's Paseo tool list). The Pi extension additionally blocks any `browser_*`/`paseo_browser_*` call, direct or through `mcp`/`mcp__paseo`, with `CHROME_BRIDGE_GUARD`.
+
 ## Pi in Paseo
 
 The Pi provider command in `~/.paseo/config.json` now starts `/usr/bin/node`

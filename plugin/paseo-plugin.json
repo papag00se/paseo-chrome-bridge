@@ -1,6 +1,6 @@
 {
   "id": "chrome-bridge",
   "requirements": {
-    "paseo": ">=0.11.2 <0.12.0"
+    "paseo": ">=0.14.0 <0.15.0"
   }
 }

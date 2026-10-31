@@ -78,7 +78,7 @@ systemctl --user status chrome-bridge.service
 # loginctl enable-linger "$USER"
 ```
 
-**B. Paseo plugin (status panel).** For Paseo 0.11.2–0.11.x:
+**B. Paseo plugin (status panel).** For Paseo 0.14.x:
 
 ```bash
 cd ~/Work/chrome-bridge/plugin
@@ -227,10 +227,14 @@ send `Authorization: Bearer <token>` on `/rpc` calls.
   session's commands strictly in order. Different sessions do not wait for each
   other. If a caller disconnects while its command is still queued, the command
   is dropped, never executed.
-- **Tabs close when the agent ends.** The MCP server holds `GET /session?id=…`
-  open for its whole life. When the agent process ends, for any reason, the OS
-  drops that connection and the bridge closes the agent's tab. When the
-  extension reconnects, the bridge sends the list of live sessions and the
+- **Tabs survive MCP restarts and close after the agent ends.** The MCP server
+  holds `GET /session?id=…` open for its whole life. The id comes from the agent
+  (`PASEO_AGENT_ID`, then `PI_SESSION_ID` or `CLAUDE_SESSION_ID`; a random id only as
+  a fallback), so when a host restarts the MCP process (for example an idle
+  shutdown) the new process adopts the same tab. When the last connection
+  drops, the bridge keeps the tab for `SESSION_RELEASE_GRACE_MS` (12 h) and
+  closes it only if no process for that agent reconnects. When the extension
+  reconnects, the bridge sends the list of live and draining sessions and the
   extension closes every other agent tab.
 - **Google searches share one cooldown.** All agents search through the same
   real browser, so simultaneous searches would look automated. Every call that
