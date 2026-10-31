@@ -1,4 +1,4 @@
-# Chrome Bridge — Paseo 0.11.2 plugin
+# Chrome Bridge — Paseo 0.14 plugin
 
 Open **Settings → Plugins → Chrome Bridge → ⋯ → Settings**, or **Chrome Bridge settings** in the Command Center. The native settings page contains bridge/extension status, Start and Stop actions, and companion-extension setup instructions. It replaces the former sidebar surface.
 

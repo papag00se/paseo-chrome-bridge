@@ -4,7 +4,7 @@
 
 # Paseo Chrome Bridge
 
-![Paseo compatibility](https://img.shields.io/badge/Paseo-0.11.2%20snapshot-22c55e?style=flat-square)
+![Paseo compatibility](https://img.shields.io/badge/Paseo-0.14.0-22c55e?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178c6?style=flat-square&logo=typescript&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Chrome%20%26%20Linux-64748b?style=flat-square)
 
@@ -51,7 +51,7 @@ node server.mjs
 
 In Chrome, open **chrome://extensions**, enable **Developer mode**, and use **Load unpacked** to select the repository's `extension/` directory. Each agent gets its own background tab in the "Paseo" tab group. The tab survives MCP server restarts and is closed 12 hours after the agent ends. CDP focus emulation prepares those targets for trusted input without activating your foreground tab. After changing extension code, reload Chrome Bridge from `chrome://extensions`.
 
-To add the Paseo 0.11.2 settings panel, in a separate terminal:
+To add the Paseo 0.14 settings panel, in a separate terminal:
 
 ```bash
 cd ~/Work/chrome-bridge/plugin
@@ -72,7 +72,7 @@ After upgrading, **reload Chrome Bridge in `chrome://extensions`**, then refresh
 
 ## Compatibility
 
-The Paseo plugin in `plugin/` targets Paseo 0.11.2–0.11.x, typechecked against the pinned 0.11.2 SDK (older ports remain in Git history). Its launcher expects `~/Work/chrome-bridge/bridge`; use that checkout location.
+The Paseo plugin in `plugin/` targets Paseo 0.14.x, typechecked against the pinned 0.14.0 SDK (older ports remain in Git history). Its launcher expects `~/Work/chrome-bridge/bridge`; use that checkout location.
 
 The bridge uses your active logged-in browser. Configure `BRIDGE_TOKEN` if you need to restrict local callers, and keep agent actions within the permissions you grant. Browser/desktop operations are externally visible; the plugin does not authorize them on its own.
 

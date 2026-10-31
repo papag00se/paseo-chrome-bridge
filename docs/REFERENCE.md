@@ -78,7 +78,7 @@ systemctl --user status chrome-bridge.service
 # loginctl enable-linger "$USER"
 ```
 
-**B. Paseo plugin (status panel).** For Paseo 0.11.2–0.11.x:
+**B. Paseo plugin (status panel).** For Paseo 0.14.x:
 
 ```bash
 cd ~/Work/chrome-bridge/plugin
