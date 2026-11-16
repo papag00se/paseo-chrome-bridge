@@ -86,12 +86,16 @@ test("MCP stdio end-to-end: discovery, typed commands, image output, errors, ses
       return res.end(JSON.stringify({ ok: false, error: "RATE_LIMITED", retryAfterMs: 22_400 }));
     }
     let result = { received: request.method };
+    if (request.method === "profiles") result = { profiles: ["papa.goose@koralabs.io", "other@example.com"], selected: null };
+    if (request.method === "selectProfile") result = { selected: request.params.profile };
     if (request.method === "eval") result = { value: { title: "Authenticated editor", elements: [] } };
     if (request.method === "screenshot") result = { dataUrl: `data:image/png;base64,${png}` };
     if (request.method === "waitText") result = { found: false };
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify(request.params?.selector === "#missing"
-      ? { ok: false, error: "selector_not_found" } : { ok: true, result }));
+      ? { ok: false, error: "selector_not_found" }
+      : request.method === "selectProfile" && request.params.profile === "missing@example.com"
+        ? { ok: false, error: "profile_not_connected" } : { ok: true, result }));
   });
   await new Promise(resolve => bridge.listen(0, "127.0.0.1", resolve));
   const transport = new StdioClientTransport({
@@ -104,7 +108,14 @@ test("MCP stdio end-to-end: discovery, typed commands, image output, errors, ses
   try {
     await client.connect(transport);
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map(t => t.name).sort(), ["web_search", "web_fetch", "web_snapshot", "web_click", "web_type", "web_fill", "web_select", "web_focus", "web_scroll", "web_key", "web_wait", "web_screenshot"].sort());
+    assert.deepEqual(tools.map(t => t.name).sort(), ["web_search", "web_fetch", "web_snapshot", "web_click", "web_type", "web_fill", "web_select", "web_focus", "web_scroll", "web_key", "web_wait", "web_screenshot", "web_profile"].sort());
+    const profiles = await client.callTool({ name: "web_profile", arguments: {} });
+    assert.deepEqual(JSON.parse(profiles.content[0].text), { profiles: ["papa.goose@koralabs.io", "other@example.com"], selected: null });
+    const selected = await client.callTool({ name: "web_profile", arguments: { profile: "papa.goose@koralabs.io" } });
+    assert.deepEqual(JSON.parse(selected.content[0].text), { selected: "papa.goose@koralabs.io" });
+    const missingProfile = await client.callTool({ name: "web_profile", arguments: { profile: "missing@example.com" } });
+    assert.equal(missingProfile.isError, true);
+    assert.match(missingProfile.content[0].text, /profile_not_connected/);
     const snapshot = await client.callTool({ name: "web_snapshot", arguments: {} });
     assert.equal(JSON.parse(snapshot.content[0].text).title, "Authenticated editor");
     assert.equal(calls.at(-1).method, "eval");
