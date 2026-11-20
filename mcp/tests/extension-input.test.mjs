@@ -253,3 +253,32 @@ test('each agent session gets its own tab, kept across service-worker restarts a
   assert.deepEqual(restarted.calls.filter(([m]) => m === 'remove').map(([, id]) => id), [8, 9]);
   assert.deepEqual(Object.keys(storage.sessionTabs), ['agent-a']);
 });
+
+test('Control+A and Control+V run the native select-all and paste commands', async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true });
+  try {
+    const context = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
+    const page = await context.newPage();
+    // The async clipboard API needs a secure origin, and about:blank is not one.
+    await page.route('http://localhost/', route => route.fulfill({ contentType: 'text/html',
+      body: '<textarea id="box">old</textarea><div id="rich" contenteditable="true"></div>' }));
+    await page.goto('http://localhost/');
+    await page.evaluate(() => navigator.clipboard.writeText('pasted once'));
+    const session = await context.newCDPSession(page);
+    const ext = extension(session);
+    await ext.run('dispatch("click", {selector: "#box"}, "agent-a")');
+    await ext.run('dispatch("key", {key: "a", modifiers: ["Control"]}, "agent-a")');
+    await ext.run('dispatch("key", {key: "v", modifiers: ["Control"]}, "agent-a")');
+    assert.equal(await page.locator('#box').inputValue(), 'pasted once');
+    await ext.run('dispatch("click", {selector: "#rich"}, "agent-a")');
+    await ext.run('dispatch("key", {key: "v", modifiers: ["Control"]}, "agent-a")');
+    assert.equal(await page.locator('#rich').innerText(), 'pasted once');
+    // Cut empties the field and keeps the text on the clipboard.
+    await ext.run('dispatch("click", {selector: "#box"}, "agent-a")');
+    await ext.run('dispatch("key", {key: "a", modifiers: ["Control"]}, "agent-a")');
+    await ext.run('dispatch("key", {key: "x", modifiers: ["Control"]}, "agent-a")');
+    assert.equal(await page.locator('#box').inputValue(), '');
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'pasted once');
+    await session.detach();
+  } finally { await browser.close(); }
+});

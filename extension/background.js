@@ -246,6 +246,10 @@ const KEYMAP = {
   Space: { keyCode: 32, key: " ", code: "Space", text: " " },
 };
 const MODIFIERS = { Alt: 1, Control: 2, Meta: 4, Shift: 8 };
+// CDP-synthesized key events never run the browser's own editing commands.
+// Ctrl/Cmd+A, C, V, X, Z and Y need the matching `commands` entry or they are
+// silently ignored by editors that rely on native clipboard handling.
+const EDIT_COMMANDS = { a: 'selectAll', c: 'copy', v: 'paste', x: 'cut', z: 'undo', y: 'redo' };
 
 async function cmdKey(tabId, p) {
   const k = (Object.hasOwn(KEYMAP, p.key) ? KEYMAP[p.key] : null) || (/^[a-zA-Z0-9]$/.test(p.key || '') ? {
@@ -260,10 +264,13 @@ async function cmdKey(tabId, p) {
   const base = { windowsVirtualKeyCode: k.keyCode, key: k.key, code: k.code, modifiers };
   // Google and other JS-heavy forms may ignore rawKeyDown for Enter. A normal
   // keyDown is the browser event path that triggers the focused form's submit.
+  // Only a bare Control or Meta chord is an edit shortcut (Shift/Alt variants are different commands).
+  const command = modifiers === MODIFIERS.Control || modifiers === MODIFIERS.Meta ? EDIT_COMMANDS[String(p.key).toLowerCase()] : undefined;
   for (let i = 0; i < repeat; i++) {
     await cdp(tabId, "Input.dispatchKeyEvent", {
       type: "keyDown", ...base,
       ...(k.text && !(modifiers & 7) ? { text: k.text, unmodifiedText: k.text } : {}),
+      ...(command ? { commands: [command] } : {}),
     });
     await cdp(tabId, "Input.dispatchKeyEvent", { type: "keyUp", ...base });
   }
