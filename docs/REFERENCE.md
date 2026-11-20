@@ -62,8 +62,11 @@ node server.mjs           # or: BRIDGE_PORT=8787 node server.mjs
 ### 2. Chrome extension (one time)
 1. Open `chrome://extensions` and enable **Developer mode**.
 2. **Load unpacked** → select this repo's `extension/` folder.
-3. Keep a normal tab focused. Chrome shows a *"…is debugging this browser"*
-   banner while a command runs — that is expected (`chrome.debugger`).
+3. Keep a normal tab focused. Chrome itself (not this extension) shows a *"…started
+   debugging this browser"* bar whenever an extension attaches `chrome.debugger`, and the
+   bar pushes the page down, which throws off click coordinates. Launch Chrome with
+   `--silent-debugger-extension-api` (one line in `~/.config/chrome-flags.conf` on Linux)
+   to suppress it. Chrome reads the flag only at launch, so restart Chrome once.
 
 ### 3. Keep the bridge running (pick one)
 

@@ -5,8 +5,9 @@
 // via chrome.debugger, so input events are trusted and behave like real typing.
 //
 // Nothing secret lives here. Change BRIDGE_URL/token below if you customize the
-// bridge port. Chrome shows a "…is debugging this browser" banner while active;
-// that is expected.
+// bridge port. Chrome itself shows a "…started debugging this browser" bar while
+// the debugger is attached and shifts the page down; launch Chrome with
+// --silent-debugger-extension-api to suppress it (see docs/REFERENCE.md).
 
 const BRIDGE_PORT = 8787;
 const BRIDGE_TOKEN = ""; // must match BRIDGE_TOKEN on the server ("" = none)
