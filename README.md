@@ -64,6 +64,12 @@ Open **Settings → Plugins → Chrome Bridge → Settings**. Start/Stop control
 
 ![Chrome Bridge settings in Paseo: bridge and extension status, Start/Stop controls and one-time extension setup](docs/media/settings.png)
 
+## Chrome profiles
+
+Load the extension in each Chrome profile you want the bridge to access. The extension requests Chrome profile identity permission so the bridge can identify a connected profile by its signed-in email; profile email addresses are visible to local bridge clients. Profiles without a Chrome-reported email cannot be selected by name. Configure `BRIDGE_TOKEN` to restrict local callers where appropriate.
+
+Call `web_profile` without arguments to list connected profiles and the current agent's selection. Call it with `profile` set to an exact listed email to select that profile for this agent. Each agent keeps its own tab in each profile; switching does not take over a user's existing tab. A missing or duplicate profile is rejected rather than silently choosing another. Selection is held by the bridge and must be repeated after a bridge restart. Reload the extension in each profile and reconnect the MCP server after upgrading; restarting the shared bridge affects other agents.
+
 ## Form controls
 
 Use `web_scroll` for nested menus/dialogs and browser-viewport coordinate clicks for custom controls without semantic selectors. Use `web_select` for native dropdowns; choose an exact label, value, or zero-based option index from `web_snapshot`. Selection is committed with trusted keyboard input and verified. `web_key` supports arrows, Home/End, PageUp/PageDown, Delete, Space, letters/digits, modifiers, and repetition. Use `web_fill` for long input/textarea/rich-text replacements; `web_type(clearFirst: true)` also clears rich text and handles empty replacements. Neither exposes passwords or uses the clipboard. Snapshots include checkbox/radio state and native option labels/selection, but never input values.

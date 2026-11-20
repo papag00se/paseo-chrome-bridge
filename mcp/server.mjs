@@ -113,6 +113,19 @@ function errorResult(err) {
 const server = new McpServer({ name: "chrome-bridge", version: VERSION });
 
 server.registerTool(
+  "web_profile",
+  {
+    title: "Choose browser profile",
+    description: "List connected Chrome profiles or select one by exact profile email for this agent. Each profile retains this agent's own tab; other agents and user tabs are not controlled.",
+    inputSchema: { profile: z.string().optional().describe("Exact profile email; omit to list connected profiles") },
+  },
+  async ({ profile }) => {
+    try { return text(JSON.stringify(await rpc(profile ? "selectProfile" : "profiles", profile ? { profile } : {}))); }
+    catch (err) { return errorResult(err); }
+  },
+);
+
+server.registerTool(
   "web_search",
   {
     title: "Web search",

@@ -535,11 +535,13 @@ function connect() {
     }
   };
 
-  ws.onopen = () => {
+  ws.onopen = async () => {
     if (socket !== ws) return;
     backoff = 1000;
     const ua = (self.navigator && self.navigator.userAgent) || "";
-    send({ type: "hello", info: { userAgent: ua, ext: `chrome-bridge ${chrome.runtime.getManifest().version}` } });
+    const profile = chrome.identity ? await chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' }) : {};
+    if (socket !== ws) return;
+    send({ type: "hello", info: { userAgent: ua, ext: `chrome-bridge ${chrome.runtime.getManifest().version}`, profile: profile.email || null } });
   };
 
   ws.onmessage = async (event) => {

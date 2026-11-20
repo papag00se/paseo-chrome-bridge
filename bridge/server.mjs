@@ -105,21 +105,33 @@ export function createBridge({
   // ---- extension connection ------------------------------------------------
   let extSocket = null;
   let extInfo = null;
+  const extensions = new Map(); // socket -> profile information
+  const selectedProfiles = new Map(); // agent session -> profile email
+  const sessionSockets = new Map(); // legacy unnamed profiles stay bound to their socket
   let seq = 0;
   const pending = new Map(); // id -> { resolve, reject, timer }
 
   function sendToExtension(cmd, params, session, timeoutMs = EXTENSION_COMMAND_TIMEOUT_MS) {
     return new Promise((resolve, reject) => {
-      if (!extSocket || extSocket.readyState !== extSocket.OPEN) {
+      const profile = selectedProfiles.get(session);
+      const matches = profile ? [...extensions].filter(([socket, info]) => socket.readyState === socket.OPEN && info?.profile === profile) : [];
+      if (profile && matches.length !== 1) return reject(new Error(matches.length ? "profile_ambiguous" : "profile_not_connected"));
+      const socket = profile ? matches[0][0] : (sessionSockets.get(session) || extSocket);
+      if (!socket || socket.readyState !== socket.OPEN) {
         return reject(new Error("extension_not_connected"));
+      }
+      if (session && !profile) {
+        const name = extensions.get(socket)?.profile;
+        if (name) selectedProfiles.set(session, name);
+        else sessionSockets.set(session, socket);
       }
       const id = ++seq;
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(new Error("extension_timeout"));
       }, timeoutMs);
-      pending.set(id, { resolve, reject, timer });
-      extSocket.send(JSON.stringify({ id, cmd, params: params || {}, session }));
+      pending.set(id, { resolve, reject, timer, socket });
+      socket.send(JSON.stringify({ id, cmd, params: params || {}, session }));
     });
   }
 
@@ -149,7 +161,13 @@ export function createBridge({
 
   function release(session) {
     log(`releasing tab for session ${session}`);
-    inSession(session, () => sendToExtension("release", {}, session)).catch(() => {});
+    inSession(session, () => {
+      for (const socket of extensions.keys()) {
+        if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ id: ++seq, cmd: "release", params: {}, session }));
+      }
+      selectedProfiles.delete(session);
+      sessionSockets.delete(session);
+    }).catch(() => {});
   }
 
   // After a bridge restart no agent has reconnected yet, so pruning right away
@@ -170,10 +188,22 @@ export function createBridge({
 
   function retainLiveSessions() {
     const sessions = [DEFAULT_SESSION, ...live.keys(), ...draining.keys()];
-    sendToExtension("retain", { sessions }, null).catch((err) => log("retain failed", err.message));
+    for (const socket of extensions.keys()) {
+      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ id: ++seq, cmd: "retain", params: { sessions }, session: null }));
+    }
   }
 
   function run(method, params, session) {
+    if (method === "profiles") return { profiles: [...extensions].filter(([socket]) => socket.readyState === socket.OPEN).map(([, info]) => info?.profile || null), selected: selectedProfiles.get(session) || null };
+    if (method === "selectProfile") {
+      const profile = params.profile;
+      if (typeof profile !== "string" || !profile.trim()) throw new Error("profile_required");
+      const matches = [...extensions].filter(([socket, info]) => socket.readyState === socket.OPEN && info?.profile === profile);
+      if (matches.length !== 1) throw new Error(matches.length ? "profile_ambiguous" : "profile_not_connected");
+      selectedProfiles.set(session, profile);
+      sessionSockets.delete(session);
+      return { selected: profile };
+    }
     if (isGoogleSearch(method, params)) {
       const slot = cooldown.acquire();
       if (!slot.ok) throw new RateLimited(slot.retryAfterMs);
@@ -286,6 +316,7 @@ export function createBridge({
     }
 
     log("extension connected");
+    extensions.set(ws, null);
     extSocket = ws;
 
     ws.on("message", (raw) => {
@@ -296,14 +327,15 @@ export function createBridge({
         return;
       }
       if (msg.type === "hello") {
-        extInfo = msg.info || null;
-        log("extension hello", extInfo && extInfo.userAgent);
+        extensions.set(ws, msg.info || null);
+        if (extSocket === ws) extInfo = msg.info || null;
+        log("extension hello", msg.info && msg.info.userAgent);
         // Close tabs of agents that ended while the extension or bridge was away.
         retainWhenSafe();
         return;
       }
       if (msg.type === "pong") return;
-      if (typeof msg.id === "number" && pending.has(msg.id)) {
+      if (typeof msg.id === "number" && pending.has(msg.id) && pending.get(msg.id).socket === ws) {
         const { resolve, reject, timer } = pending.get(msg.id);
         clearTimeout(timer);
         pending.delete(msg.id);
@@ -314,9 +346,11 @@ export function createBridge({
 
     ws.on("close", () => {
       log("extension disconnected");
+      extensions.delete(ws);
+      for (const [session, socket] of sessionSockets) if (socket === ws) sessionSockets.delete(session);
       if (extSocket === ws) {
-        extSocket = null;
-        extInfo = null;
+        extSocket = [...extensions.keys()].at(-1) || null;
+        extInfo = extSocket ? extensions.get(extSocket) : null;
       }
     });
     ws.on("error", () => {});
@@ -324,10 +358,10 @@ export function createBridge({
 
   // keep the MV3 service worker alive with periodic app-level pings
   const pinger = setInterval(() => {
-    if (extSocket && extSocket.readyState === extSocket.OPEN) {
-      try {
-        extSocket.send(JSON.stringify({ type: "ping" }));
-      } catch {}
+    for (const socket of extensions.keys()) {
+      if (socket.readyState === socket.OPEN) {
+        try { socket.send(JSON.stringify({ type: "ping" })); } catch {}
+      }
     }
   }, EXTENSION_PING_INTERVAL_MS);
   pinger.unref();

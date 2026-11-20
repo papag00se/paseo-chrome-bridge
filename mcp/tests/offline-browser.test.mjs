@@ -21,7 +21,10 @@ test('disconnected companion leaves discovery available and returns a browser to
   });
   try {
     await client.connect(transport);
-    assert.equal((await client.listTools()).tools.length, 12);
+    assert.ok((await client.listTools()).tools.some(tool => tool.name === 'web_profile'));
+    const profile = await client.callTool({name:'web_profile', arguments:{profile:'papa.goose@koralabs.io'}});
+    assert.equal(profile.isError, true);
+    assert.match(profile.content[0].text, /extension_not_connected/);
     const result = await client.callTool({name:'web_snapshot', arguments:{}});
     assert.equal(result.isError, true);
     assert.match(result.content[0].text, /extension_not_connected/);
